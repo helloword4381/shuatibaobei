@@ -81,17 +81,32 @@
     }
   }
 
-  /** 云端推送进度（失败返回 {ok:false, error}，不抛出） */
+  /** 云端推送进度（失败返回 {ok:false, error}，不抛出）
+   *  自愈：若云端 users 表无此用户（外键违规 23503），自动补注册后重试一次。
+   *  场景：旧 Supabase 项目被回收重建后，本地老账号首次推送进度时触发。 */
   async function cloudPushProgress(username, wrongBlob, histBlob, settingsBlob) {
+    const params = {
+      p_username: String(username || '').toLowerCase(),
+      p_wrong: wrongBlob || {},
+      p_hist: histBlob || {},
+      p_settings: settingsBlob || {}
+    };
     try {
-      await cloudRPC('sync_progress_to_cloud', {
-        p_username: String(username || '').toLowerCase(),
-        p_wrong: wrongBlob || {},
-        p_hist: histBlob || {},
-        p_settings: settingsBlob || {}
-      });
+      await cloudRPC('sync_progress_to_cloud', params);
       return { ok: true };
     } catch (e) {
+      const msg = String(e.message || e);
+      // 23503 = PostgreSQL 外键违规；409 = Supabase REST 包装的冲突状态码
+      if (msg.includes('23503') || msg.includes('foreign key') || msg.includes('409')) {
+        const local = getUsers()[username] || {};
+        if (local.pwdHash && local.salt) {
+          const r = await cloudRegisterUser(username, local.pwdHash, local.salt);
+          if (r.ok) {                 // 补注册成功 → 重试推送
+            await cloudRPC('sync_progress_to_cloud', params);
+            return { ok: true, autoRegistered: true };
+          }
+        }
+      }
       return { ok: false, error: e };
     }
   }
