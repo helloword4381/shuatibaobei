@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#4f46e5">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="刷题宝贝">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
+<title>刷题宝贝</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <!-- 顶部栏 -->
+  <header class="topbar">
+    <div class="brand"><span class="logo">📚</span><span class="brand-name">刷题宝贝</span></div>
+    <div class="top-actions">
+      <span id="db-version" class="version-tag" title="题库版本">v—</span>
+      <button id="btn-sync" class="icon-btn" title="检查更新">⟳</button>
+    </div>
+  </header>
+
+  <!-- 启动加载 -->
+  <section id="view-splash" class="view active">
+    <div class="splash">
+      <div class="splash-ring"></div>
+      <div class="splash-text" id="splash-text">正在加载题库…</div>
+    </div>
+  </section>
+
+  <!-- 首页 -->
+  <section id="view-home" class="view">
+    <div class="home-stats" id="home-stats"></div>
+    <div class="section-title">刷题模式</div>
+    <div class="mode-grid">
+      <div class="mode-card c1" data-mode="practice">
+        <div class="mode-ic">✍️</div>
+        <div class="mode-name">刷题练习</div>
+        <div class="mode-desc">顺序/随机刷题</div>
+      </div>
+      <div class="mode-card c2" data-mode="smart">
+        <div class="mode-ic">🧠</div>
+        <div class="mode-name">智能练题</div>
+        <div class="mode-desc">针对薄弱项</div>
+      </div>
+      <div class="mode-card c3" data-mode="wrong-train">
+        <div class="mode-ic">🎯</div>
+        <div class="mode-name">错题训练</div>
+        <div class="mode-desc">只练错题</div>
+      </div>
+      <div class="mode-card c4" data-mode="memorize">
+        <div class="mode-ic">📖</div>
+        <div class="mode-name">背题模式</div>
+        <div class="mode-desc">题干+答案翻卡</div>
+      </div>
+    </div>
+    <div class="section-title">题库与记录</div>
+    <div class="list-card" id="bank-list"></div>
+    <div class="mode-grid" style="margin-top:12px">
+      <div class="mode-card c5" data-mode="wrong-book">
+        <div class="mode-ic">📒</div>
+        <div class="mode-name">错题集</div>
+        <div class="mode-desc" id="wrong-count-desc">0 道错题</div>
+      </div>
+      <div class="mode-card c6" data-mode="exam">
+        <div class="mode-ic">📝</div>
+        <div class="mode-name">模拟考试</div>
+        <div class="mode-desc">50题随机测验</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 配置页（开始刷题前选择） -->
+  <section id="view-setup" class="view">
+    <div class="setup-head">
+      <button class="back-btn" data-back="home">‹</button>
+      <h2 id="setup-title">刷题练习</h2>
+    </div>
+    <div class="panel">
+      <label class="field-label">选择题库</label>
+      <select id="setup-bank" class="select"></select>
+      <label class="field-label">题型</label>
+      <div class="chip-row" id="setup-types"></div>
+      <label class="field-label">出题方式</label>
+      <div class="chip-row" id="setup-order">
+        <span class="chip active" data-val="seq">顺序</span>
+        <span class="chip" data-val="rand">随机</span>
+      </div>
+      <label class="field-label">题量 <span id="setup-count-val" class="muted">20</span></label>
+      <input type="range" id="setup-count" min="5" max="100" step="5" value="20">
+      <button class="btn-primary" id="setup-start">开始</button>
+    </div>
+  </section>
+
+  <!-- 答题页 -->
+  <section id="view-quiz" class="view">
+    <div class="quiz-head">
+      <button class="back-btn" data-back="home">‹</button>
+      <div class="quiz-progress">
+        <div class="qp-bar"><div id="qp-fill"></div></div>
+        <div class="qp-text" id="qp-text">0 / 0</div>
+      </div>
+      <div class="quiz-score" id="quiz-score">—</div>
+    </div>
+    <div class="quiz-body" id="quiz-body"></div>
+    <div class="quiz-foot">
+      <button class="btn-ghost" id="q-prev">上一题</button>
+      <button class="btn-primary" id="q-submit">提交</button>
+      <button class="btn-primary hidden" id="q-next">下一题</button>
+    </div>
+  </section>
+
+  <!-- 结果页 -->
+  <section id="view-result" class="view">
+    <div class="result-head">
+      <div class="result-ring" id="result-ring"><span id="result-pct">0%</span></div>
+      <div class="result-meta" id="result-meta"></div>
+    </div>
+    <div class="result-actions">
+      <button class="btn-ghost" id="result-review">查看错题</button>
+      <button class="btn-primary" id="result-again">再来一次</button>
+    </div>
+    <div class="section-title">本次错题</div>
+    <div class="list-card" id="result-wrongs"></div>
+  </section>
+
+  <!-- 背题模式 -->
+  <section id="view-memorize" class="view">
+    <div class="quiz-head">
+      <button class="back-btn" data-back="home">‹</button>
+      <div class="quiz-progress"><div class="qp-bar"><div id="mem-fill"></div></div><div class="qp-text" id="mem-text">0 / 0</div></div>
+      <div class="quiz-score">📖</div>
+    </div>
+    <div class="memorize-body" id="memorize-body"></div>
+    <div class="quiz-foot">
+      <button class="btn-ghost" id="mem-prev">上一页</button>
+      <button class="btn-ghost" id="mem-mark">记不住</button>
+      <button class="btn-primary" id="mem-next">下一页</button>
+    </div>
+  </section>
+
+  <!-- 错题集 -->
+  <section id="view-wrong" class="view">
+    <div class="setup-head">
+      <button class="back-btn" data-back="home">‹</button>
+      <h2>错题集</h2>
+      <button class="link-btn" id="wrong-clear">清空</button>
+    </div>
+    <div class="panel-filters">
+      <select id="wrong-bank" class="select slim"></select>
+    </div>
+    <div class="list-card" id="wrong-list"></div>
+    <div class="empty-tip hidden" id="wrong-empty">还没有错题，继续保持～</div>
+  </section>
+
+  <!-- 底部导航 -->
+  <nav class="tabbar" id="tabbar">
+    <div class="tab active" data-tab="home">🏠<span>首页</span></div>
+    <div class="tab" data-tab="practice">✍️<span>练习</span></div>
+    <div class="tab" data-tab="wrong-book">📒<span>错题</span></div>
+    <div class="tab" data-tab="memorize">📖<span>背题</span></div>
+    <div class="tab" data-tab="me">👤<span>我的</span></div>
+  </nav>
+
+  <!-- 更新弹窗 -->
+  <div class="modal-mask hidden" id="update-modal">
+    <div class="modal">
+      <div class="modal-ic">🆕</div>
+      <h3>发现新题库</h3>
+      <p id="update-desc"></p>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="update-later">稍后</button>
+        <button class="btn-primary" id="update-now">立即更新</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+</div>
+<script src="js/sql-wasm.js"></script>
+<script src="js/db.js"></script>
+<script src="js/store.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
