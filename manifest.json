@@ -1,7 +1,7 @@
 {
-  "version": "20260822-v2",
+  "version": "20260823-0120",
   "question_count": 607,
-  "updated_at": "2026-08-22 20:30:00",
+  "updated_at": "2026-08-23 01:20:07",
   "db_file": "shuatibaobei.db",
   "db_url": "https://raw.githubusercontent.com/helloword4381/shuatibaobei/main/shuatibaobei.db",
   "manifest_url": "https://raw.githubusercontent.com/helloword4381/shuatibaobei/main/manifest.json",
@@ -12,8 +12,8 @@
   ],
   "stats": {
     "single": 373,
-    "multiple": 174,
     "judge": 50,
+    "multiple": 174,
     "short_multi": 10
   }
 }
