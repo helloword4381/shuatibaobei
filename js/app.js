@@ -778,5 +778,34 @@ boot();
 
 // 注册 Service Worker（PWA 离线 + 可安装）
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      // 后台检测到新版 SW（缓存版本变了）→ toast 提示用户「点击刷新」，不自动 reload 以免丢失正在做的题
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', () => {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            // controller 存在说明正在用旧版本，新版本在 waiting/刚安装完 → 提示刷新
+            let dismissed = false;
+            toast('🚀 发现新版本，点击这里立即刷新更新', -1, () => {
+              if (dismissed) return;
+              dismissed = true;
+              // 强制跳过等待（保险）+ 刷新
+              nw.postMessage && nw.postMessage({ type: 'SKIP_WAITING' });
+              setTimeout(() => window.location.reload(), 120);
+            });
+          }
+        });
+      });
+      // 每分钟悄悄查一次（对付 GitHub Pages 热部署后一直挂在后台的标签页）
+      setInterval(() => reg.update().catch(() => {}), 60 * 1000);
+    }).catch(() => {});
+
+    // 新 SW 接管后（如果刚才通过 postMessage skipWaiting）→ 立即刷新
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!refreshing) { refreshing = true; window.location.reload(); }
+    });
+  });
 }
