@@ -131,11 +131,20 @@ const DB = (() => {
     return await resp.json();
   }
 
-  /** 检查更新：返回 {hasUpdate, remote, local} */
+  /** 版本号比较：远端严格大于本地才判定有更新（防止本地版本更新后还被旧 manifest 诱导降级）。
+   *  新格式 YYYYMMDD-HHMM 字典序即时间序；对旧格式（纯日期或带 -vN 后缀）先归一化再比。 */
+  function cmpVer(a, b) {
+    const norm = s => String(s || '')
+      .replace(/-\d+$/, m => m.padStart(6, '0'))         // -0120 → -0120 (保证 4 位时分足够对齐)
+      .replace(/-v(\d+)/, (_m, n) => '.' + String(n).padStart(3, '0')); // -v2 → .002
+    return norm(a).localeCompare(norm(b));
+  }
+
+  /** 检查更新：返回 {hasUpdate, remote, local}。hasUpdate 仅在远端严格更新时为 true */
   async function checkUpdate() {
     const remote = await fetchManifest();
     const local = curVersion || (await idbGet(KEY_VER));
-    const hasUpdate = String(remote.version) !== String(local);
+    const hasUpdate = cmpVer(String(remote.version), String(local)) > 0;
     return { hasUpdate, remote, local };
   }
 
