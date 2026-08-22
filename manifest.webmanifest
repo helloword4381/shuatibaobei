@@ -1,6 +1,6 @@
 {
-  "name": "刷题宝贝 - 毕节南环试验题库",
-  "short_name": "刷题宝贝",
+  "name": "刷题大专家 - 毕节南环试验题库",
+  "short_name": "刷题大专家",
   "description": "毕节南环试验考试刷题App，支持练习、智能练题、错题训练、背题模式",
   "start_url": "./index.html",
   "scope": "./",
