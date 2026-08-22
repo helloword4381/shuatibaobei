@@ -285,8 +285,11 @@ function openSetup(mode) {
   const banks = [{ bank: '', title: '全部题库' }].concat(DB.listBanks());
   $('#setup-bank').innerHTML = banks.map(b => `<option value="${esc(b.bank)}">${esc(b.title)}</option>`).join('');
 
-  // 模拟考试固定全题型；其他模式沿用上次选择
-  const types = ['single', 'multiple', 'judge', 'short'];
+  // 简答题仅在背题模式可选；刷题/智能/模拟只出选择判断题
+  const isMemorize = mode === 'memorize';
+  const types = isMemorize ? ['single', 'multiple', 'judge', 'short'] : ['single', 'multiple', 'judge'];
+  // 非背题模式强制去掉简答
+  if (!isMemorize) SETUP.types = SETUP.types.filter(t => t !== 'short');
   $('#setup-types').innerHTML = types.map(t =>
     `<span class="chip ${mode === 'exam' || SETUP.types.includes(t) ? 'active' : ''}" data-val="${t}">${typeLabel(t)}</span>`).join('');
   $$('#setup-types .chip').forEach(c => c.onclick = () => c.classList.toggle('active'));
@@ -327,7 +330,7 @@ $('#setup-start').onclick = () => {
     const picked = Store.pickWeighted(ids, Math.min(SETUP.count, ids.length));
     qs = DB.byIds(picked);
   } else if (SETUP.mode === 'exam') {
-    SETUP.types = ['single', 'multiple', 'judge', 'short'];
+    SETUP.types = ['single', 'multiple', 'judge']; // 模拟考试不含简答题
     qs = DB.pickQuestions({ bank: null, types: SETUP.types, order: 'rand', limit: SETUP.count });
   } else {
     qs = DB.pickQuestions({ bank: SETUP.bank || null, types: SETUP.types, order: SETUP.order, limit: SETUP.count });
@@ -407,7 +410,7 @@ function renderQuiz() {
   body.innerHTML = '';
 
   const meta = el('div', 'q-meta');
-  meta.innerHTML = `<span class="tag">${esc(q.bank_title)}</span><span>${typeLabel(q.type)}</span>${q.source_type === 'short' ? '<span style="color:#8b5cf6">由简答转</span>' : ''}`;
+  meta.innerHTML = `<span class="tag">${esc(q.bank_title)}</span><span>${typeLabel(q.type)}</span>`;
   body.appendChild(meta);
 
   body.appendChild(el('div', 'q-stem', esc(q.question)));
@@ -527,16 +530,19 @@ function renderMemorize() {
   $('#mem-text').textContent = (MEM.idx + 1) + ' / ' + total;
   $('#mem-fill').style.width = ((MEM.idx + 1) / total * 100) + '%';
   $('#mem-prev').style.visibility = MEM.idx === 0 ? 'hidden' : 'visible';
-  const ansTxt = q.answer.map(a => q.type === 'judge' ? (a === 'T' ? '正确' : '错误') : a).join('、');
-  const optsTxt = q.type === 'judge' ? '' :
+  // 简答题直接显示参考答案文本；其它题型走选项逻辑
+  const isShort = q.type === 'short_multi';
+  const ansTxt = isShort ? q.answer :
+    q.answer.map(a => q.type === 'judge' ? (a === 'T' ? '正确' : '错误') : a).join('、');
+  const optsTxt = isShort || q.type === 'judge' ? '' :
     q.options.map(([k, t]) => `<div><b>${esc(k)}.</b> ${esc(t)}${q.answer.includes(k) ? ' ✓' : ''}</div>`).join('');
   $('#memorize-body').innerHTML = `
     <div class="mem-card">
       <div class="mem-tag">${esc(q.bank_title)} · ${typeLabel(q.type)}</div>
       <div class="mem-stem">${esc(q.question)}</div>
       <div class="mem-divider"></div>
-      <div class="mem-label">正确答案</div>
-      <div class="mem-answer">${esc(ansTxt)}</div>
+      <div class="mem-label">${isShort ? '参考答案' : '正确答案'}</div>
+      <div class="mem-answer" ${isShort ? 'style="white-space:pre-wrap;line-height:1.8"' : ''}>${esc(ansTxt)}</div>
       ${optsTxt ? '<div class="mem-divider"></div><div class="mem-label">选项</div><div class="mem-answer">' + optsTxt + '</div>' : ''}
       ${q.analysis ? '<div class="mem-analysis"><b>参考解析：</b>' + esc(q.analysis) + '</div>' : ''}
     </div>`;

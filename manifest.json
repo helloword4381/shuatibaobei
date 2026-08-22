@@ -1,7 +1,7 @@
 {
-  "version": "20260822",
+  "version": "20260822-v2",
   "question_count": 607,
-  "updated_at": "2026-08-22 10:25:00",
+  "updated_at": "2026-08-22 20:30:00",
   "db_file": "shuatibaobei.db",
   "db_url": "https://raw.githubusercontent.com/helloword4381/shuatibaobei/main/shuatibaobei.db",
   "manifest_url": "https://raw.githubusercontent.com/helloword4381/shuatibaobei/main/manifest.json",
