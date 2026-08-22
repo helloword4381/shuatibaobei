@@ -290,6 +290,8 @@ function openSetup(mode) {
   const types = isMemorize ? ['single', 'multiple', 'judge', 'short'] : ['single', 'multiple', 'judge'];
   // 非背题模式强制去掉简答
   if (!isMemorize) SETUP.types = SETUP.types.filter(t => t !== 'short');
+  // 背题模式显示简答题提示
+  $('#setup-short-hint').classList.toggle('hidden', !isMemorize);
   $('#setup-types').innerHTML = types.map(t =>
     `<span class="chip ${mode === 'exam' || SETUP.types.includes(t) ? 'active' : ''}" data-val="${t}">${typeLabel(t)}</span>`).join('');
   $$('#setup-types .chip').forEach(c => c.onclick = () => c.classList.toggle('active'));
