@@ -247,19 +247,23 @@
   function listAccounts() { return Object.keys(getUsers()); }
 
   // ==================== 业务数据（按账号命名空间） ====================
-  const K = { wrong: 'wrong', hist: 'hist', set: 'set' };
+  const K = { wrong: 'wrong', hist: 'hist', set: 'set', upd: 'upd' };
+
+  /** 本地进度最后修改时间戳（任何做题/错题/设置变更都更新），用于与云端 updated_at 比较 */
+  function touchUpdated() { save(nsKey(K.upd), String(Date.now())); }
+  function localUpdatedAt() { return +(load(nsKey(K.upd), '0')) || 0; }
 
   // 错题: { id: {count, ts, bank} }
   const wrong = () => load(nsKey(K.wrong), {});
-  const setWrong = o => save(nsKey(K.wrong), o);
+  const setWrong = o => { save(nsKey(K.wrong), o); touchUpdated(); };
 
   // 历史: { id: {seen, correct, wrong, ts, bank} }
   const hist = () => load(nsKey(K.hist), {});
-  const setHist = o => save(nsKey(K.hist), o);
+  const setHist = o => { save(nsKey(K.hist), o); touchUpdated(); };
 
   // 设置
   const settings = () => load(nsKey(K.set), {});
-  const setSettings = o => save(nsKey(K.set), Object.assign(settings(), o));
+  const setSettings = o => { save(nsKey(K.set), Object.assign(settings(), o)); touchUpdated(); };
 
   // ---- 错题 API ----
   function getWrongIds() {
@@ -444,22 +448,29 @@
 
   function cloudEnabled() { return !!CLOUD.ENABLED; }
 
-  /** 把当前登录用户的本地进度推一次到云端（app.js 每 60s 调用） */
+  /** 取当前用户的三份本地 blob（用于推送） */
+  function snapBlobs(u) {
+    return {
+      wrong: load(nsKeyFor(u, K.wrong), {}),
+      hist: load(nsKeyFor(u, K.hist), {}),
+      settings: load(nsKeyFor(u, K.set), {}),
+    };
+  }
+
+  /** 把当前登录用户的本地进度推一次到云端（仅做推送，不比较时间，用于"立即同步"） */
   async function cloudPushNow() {
     if (!CLOUD.ENABLED) return { ok: false, reason: 'cloud disabled' };
     const u = who();
     if (!u) return { ok: false, reason: 'guest' };
     try {
-      const wrongBlob = load(nsKeyFor(u, K.wrong), {});
-      const histBlob = load(nsKeyFor(u, K.hist), {});
-      const settingsBlob = load(nsKeyFor(u, K.set), {});
-      return await cloudPushProgress(u, wrongBlob, histBlob, settingsBlob);
+      const b = snapBlobs(u);
+      return await cloudPushProgress(u, b.wrong, b.hist, b.settings);
     } catch (e) {
       return { ok: false, error: e };
     }
   }
 
-  /** 手动拉一次云端进度并合并到本地 */
+  /** 拉云端进度并合并到本地（不推送，用于"拉取并合并"按钮） */
   async function cloudPullNow() {
     if (!CLOUD.ENABLED) return { ok: false, reason: 'cloud disabled' };
     const u = who();
@@ -470,7 +481,50 @@
       mergeRemoteBlob(nsKeyFor(u, K.wrong), cloudProg.wrong, mergeWrong);
       mergeRemoteBlob(nsKeyFor(u, K.hist), cloudProg.hist, mergeHist);
       mergeRemoteBlob(nsKeyFor(u, K.set), cloudProg.settings, (l, r) => Object.assign({}, r || {}, l || {}));
-      return { ok: true };
+      return { ok: true, pulled: true };
+    } catch (e) {
+      return { ok: false, error: e };
+    }
+  }
+
+  /** 双向同步：先拉云端 updated_at 核对谁更新 → 云端新则合并拉取 → 本地新或持平则推送。
+   *  最终状态：两端都更新到最新一侧的数据。app.js 每 60s 调用。 */
+  async function cloudSyncNow() {
+    if (!CLOUD.ENABLED) return { ok: false, reason: 'cloud disabled' };
+    const u = who();
+    if (!u) return { ok: false, reason: 'guest' };
+    try {
+      const cloudProg = await cloudGetProgress(u);
+      const cloudTs = cloudProg && cloudProg.updated_at ? Date.parse(cloudProg.updated_at) : 0;
+      const localTs = localUpdatedAt();
+      const cloudsNewer = cloudTs > localTs + 1000;   // 留 1s 容忍时钟偏移
+      const localsNewer = localTs > cloudTs + 1000;
+
+      let pulled = false, pushed = false;
+
+      // 云端更新 → 先把云端内容合并到本地
+      if (cloudsNewer && cloudProg) {
+        mergeRemoteBlob(nsKeyFor(u, K.wrong), cloudProg.wrong, mergeWrong);
+        mergeRemoteBlob(nsKeyFor(u, K.hist), cloudProg.hist, mergeHist);
+        mergeRemoteBlob(nsKeyFor(u, K.set), cloudProg.settings, (l, r) => Object.assign({}, r || {}, l || {}));
+        pulled = true;
+      }
+
+      // 本地更新 / 两端持平 / 云端为空 → 推送当前本地到云端
+      if (localsNewer || !cloudProg || !cloudsNewer) {
+        const b = snapBlobs(u);
+        const r = await cloudPushProgress(u, b.wrong, b.hist, b.settings);
+        if (!r.ok) return { ok: false, error: r.error };
+        pushed = true;
+      }
+
+      return {
+        ok: true, pulled, pushed,
+        detail: pulled && pushed ? '两端合并（云端新→本地→推送更新后）'
+              : pulled        ? '云端更新，已拉取合并'
+              : pushed        ? '本地更新，已推送'
+              :                '已同步'
+      };
     } catch (e) {
       return { ok: false, error: e };
     }
@@ -488,6 +542,6 @@
     // 跨设备迁移
     exportAll, importAll,
     // 云端同步
-    cloudEnabled, cloudPushNow, cloudPullNow,
+    cloudEnabled, cloudPushNow, cloudPullNow, cloudSyncNow,
   };
 })();

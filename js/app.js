@@ -139,16 +139,20 @@ function stopCloudPushTimer() {
 function startCloudPushTimer() {
   stopCloudPushTimer();
   if (!Store.cloudEnabled || !Store.cloudEnabled()) return;
-  // 登录成功后先推一次，避免干等 60s
+  // 登录后先做一次双向同步（云端新则先拉取到本地，再按情况推送）
   setTimeout(async () => {
-    const r = await Store.cloudPushNow();
-    CLOUD_LAST = { at: Date.now(), ok: !!r.ok, msg: r.ok ? '首次自动同步成功' : (r.reason || '云端可能暂不可用') };
+    const r = await Store.cloudSyncNow();
+    CLOUD_LAST = { at: Date.now(), ok: !!r.ok,
+      msg: r.ok ? (r.detail || '双向同步完成') : (r.reason || '云端可能暂不可用') };
     refreshCloudStatus();
   }, 800);
+  // 每 60 秒做双向同步：核对 updated_at，谁更新就以谁为准
   CLOUD_PUSH_TIMER = setInterval(async () => {
     if (!Store.who()) return;
-    const r = await Store.cloudPushNow();
-    CLOUD_LAST = { at: Date.now(), ok: !!r.ok, msg: r.ok ? '已同步' : ((r.reason || '') + (r.error ? ': ' + String(r.error.message || r.error) : '')) };
+    const r = await Store.cloudSyncNow();
+    const errMsg = r.error ? (' : ' + String(r.error.message || r.error)) : '';
+    CLOUD_LAST = { at: Date.now(), ok: !!r.ok,
+      msg: r.ok ? (r.detail || '已同步') : ((r.reason || '同步失败') + errMsg) };
     refreshCloudStatus();
   }, 60 * 1000);
 }
@@ -670,10 +674,15 @@ function bindAccountCenter() {
     if (!Store.who()) { toast('请先登录'); return; }
     btnPush.disabled = true; const ot = btnPush.textContent; btnPush.textContent = '同步中…';
     try {
-      const r = await Store.cloudPushNow();
-      CLOUD_LAST = { at: Date.now(), ok: !!r.ok, msg: r.ok ? '手动同步成功' : (r.reason || String(r.error?.message || r.error || '失败')) };
+      const r = await Store.cloudSyncNow();
+      CLOUD_LAST = { at: Date.now(), ok: !!r.ok,
+        msg: r.ok ? (r.detail || '双向同步成功') : (r.reason || String(r.error?.message || r.error || '失败')) };
       refreshCloudStatus();
-      toast(CLOUD_LAST.ok ? '已同步到云端：' + CLOUD_LAST.msg : '同步失败：' + CLOUD_LAST.msg);
+      toast(CLOUD_LAST.ok ? '☁️ ' + CLOUD_LAST.msg : '同步失败：' + CLOUD_LAST.msg);
+      if (r.ok) {
+        updateUserTag(); renderAccountSwitcher();
+        if ($('#view-home').classList.contains('active')) renderHome();
+      }
     } finally { btnPush.disabled = false; btnPush.textContent = ot; }
   };
 
