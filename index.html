@@ -34,27 +34,44 @@
 
   <!-- 登录/注册页 -->
   <section id="view-login" class="view">
-    <div class="login-wrap">
-      <div class="login-card panel">
-        <div class="brand" style="justify-content:center;font-size:22px;margin-bottom:6px">
-          <span class="logo">📚</span><span class="brand-name">刷题大专家</span>
+    <div class="acc-wrap">
+      <div class="acc-grid">
+        <div>
+          <div class="acc-logo">
+            <div class="li-ic">📚</div>
+            <h1>刷题大专家<small>注册账号即可保存个人进度 · 多账号互相隔离</small></h1>
+          </div>
+          <div class="list-card" style="margin-top:14px">
+            <div class="list-item"><div class="li-ic" style="background:#fef2f2">🔒</div><div class="li-main"><div class="li-title">密码本地加密存储</div><div class="li-sub">使用 SHA-256 + 盐值散列，明文不留存</div></div></div>
+            <div class="list-item"><div class="li-ic" style="background:#eff6ff">📦</div><div class="li-main"><div class="li-title">每个人独立进度空间</div><div class="li-sub">答题记录 / 错题 / 正确率 互不干扰</div></div></div>
+            <div class="list-item"><div class="li-ic" style="background:#f0fdf4">💾</div><div class="li-main"><div class="li-title">记住账号 · 自动登录</div><div class="li-sub">勾选后下次打开无需再输入</div></div></div>
+          </div>
         </div>
-        <div class="muted" style="text-align:center;margin-bottom:18px">注册账号后可保存个人进度（答题记录/错题/正确率每人独立）</div>
-        <div class="chip-row" style="justify-content:center;margin-bottom:14px">
-          <span class="chip active" data-mode="login">登录</span>
-          <span class="chip" data-mode="register">注册</span>
+        <div>
+          <div class="acc-card">
+            <div class="mode-tabs">
+              <span class="chip active" data-mode="login">登录</span>
+              <span class="chip" data-mode="register">注册</span>
+            </div>
+            <div class="acc-field">
+              <label>用户名</label>
+              <input id="acc-user" type="text" placeholder="请输入用户名（至少 2 个字符）" autocomplete="username">
+            </div>
+            <div class="acc-field">
+              <label>密码</label>
+              <input id="acc-pwd" type="password" placeholder="请输入密码（至少 4 位）" autocomplete="current-password">
+            </div>
+            <div class="acc-extra">
+              <label class="rem"><input type="checkbox" id="acc-remember" checked>记住账号（下次自动登录）</label>
+            </div>
+            <div class="acc-actions">
+              <button class="btn-primary" id="acc-submit">登 录</button>
+              <button class="btn-ghost" id="acc-skip">访客试用</button>
+            </div>
+            <div id="account-switcher" class="switcher hidden"></div>
+            <div class="acc-tip">所有账号数据仅保存在当前设备本地浏览器，不会上传到任何服务器</div>
+          </div>
         </div>
-        <label class="field-label">用户名</label>
-        <input id="acc-user" class="input" placeholder="请输入用户名" autocomplete="username">
-        <label class="field-label">密码</label>
-        <input id="acc-pwd" class="input" type="password" placeholder="请输入密码" autocomplete="current-password">
-        <label class="checkbox-row" style="margin-top:12px">
-          <input type="checkbox" id="acc-remember" checked>
-          <span>记住账号（下次自动登录）</span>
-        </label>
-        <button class="btn-primary" id="acc-submit">登 录</button>
-        <div id="account-switcher" class="acc-switcher hidden"></div>
-        <button class="link-btn" id="acc-skip" style="margin-top:14px">先以访客身份使用（不记录进度）</button>
       </div>
     </div>
   </section>
