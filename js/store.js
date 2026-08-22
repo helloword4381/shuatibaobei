@@ -487,8 +487,10 @@
     }
   }
 
-  /** 双向同步：先拉云端 updated_at 核对谁更新 → 云端新则合并拉取 → 本地新或持平则推送。
-   *  最终状态：两端都更新到最新一侧的数据。app.js 每 60s 调用。 */
+  /** 双向同步：**始终双向合并**，先把云端内容合并到本地（错题/历史取并集），再把合并后的本地推回云端。
+   *  永远不会出现 A 覆盖 B 的情况，任何一侧做过的题都会保留。
+   *  云端 progress.updated_at 与本地 updated_at 仅用于冲突时 settings 取更新一侧的值。
+   *  app.js 每 60s 以及"立即同步"按钮都走这里。 */
   async function cloudSyncNow() {
     if (!CLOUD.ENABLED) return { ok: false, reason: 'cloud disabled' };
     const u = who();
@@ -497,34 +499,39 @@
       const cloudProg = await cloudGetProgress(u);
       const cloudTs = cloudProg && cloudProg.updated_at ? Date.parse(cloudProg.updated_at) : 0;
       const localTs = localUpdatedAt();
-      const cloudsNewer = cloudTs > localTs + 1000;   // 留 1s 容忍时钟偏移
-      const localsNewer = localTs > cloudTs + 1000;
+      const cloudsNewer = cloudTs > localTs + 1000;
 
-      let pulled = false, pushed = false;
+      let merged = false, pushed = false, cloudEmpty = !cloudProg;
 
-      // 云端更新 → 先把云端内容合并到本地
-      if (cloudsNewer && cloudProg) {
+      if (cloudProg) {
+        // 错题：按题 id 并集，每个 id 取 count 最大、ts 最新
         mergeRemoteBlob(nsKeyFor(u, K.wrong), cloudProg.wrong, mergeWrong);
+        // 历史：按题 id 并集，每个 id 取 seen/correct/wrong 累加、ts 最新
         mergeRemoteBlob(nsKeyFor(u, K.hist), cloudProg.hist, mergeHist);
-        mergeRemoteBlob(nsKeyFor(u, K.set), cloudProg.settings, (l, r) => Object.assign({}, r || {}, l || {}));
-        pulled = true;
+        // 设置：云端更新则用云端，否则保留本地
+        if (cloudsNewer) {
+          mergeRemoteBlob(nsKeyFor(u, K.set), cloudProg.settings, (_l, r) => (r || {}));
+        } else {
+          mergeRemoteBlob(nsKeyFor(u, K.set), cloudProg.settings, (l, r) => Object.assign({}, r || {}, l || {}));
+        }
+        merged = true;
       }
 
-      // 本地更新 / 两端持平 / 云端为空 → 推送当前本地到云端
-      if (localsNewer || !cloudProg || !cloudsNewer) {
-        const b = snapBlobs(u);
-        const r = await cloudPushProgress(u, b.wrong, b.hist, b.settings);
-        if (!r.ok) return { ok: false, error: r.error };
-        pushed = true;
-      }
+      // 合并后本地数据已变更，写入新的时间戳（避免下次还被判定云端新反复合并）
+      if (merged) touchUpdated();
 
-      return {
-        ok: true, pulled, pushed,
-        detail: pulled && pushed ? '两端合并（云端新→本地→推送更新后）'
-              : pulled        ? '云端更新，已拉取合并'
-              : pushed        ? '本地更新，已推送'
-              :                '已同步'
-      };
+      // 无论谁更新，都把合并后的本地（或纯本地）推回云端，保持两端一致
+      const b = snapBlobs(u);
+      const r = await cloudPushProgress(u, b.wrong, b.hist, b.settings);
+      if (!r.ok) return { ok: false, error: r.error };
+      pushed = true;
+
+      let detail;
+      if (cloudEmpty)      detail = '云端为空，已上传本地进度';
+      else if (cloudsNewer) detail = '云端有新内容 → 合并到本地 → 同步后两端一致';
+      else                 detail = '本地有新内容 → 合并云端补充 → 同步后两端一致';
+
+      return { ok: true, merged, pushed, cloudEmpty, cloudsNewer, detail };
     } catch (e) {
       return { ok: false, error: e };
     }
