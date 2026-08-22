@@ -196,9 +196,9 @@ async function boot() {
       if (rem) $('#acc-user').value = rem;
       updateUserTag();
       renderAccountSwitcher();
-      // 没有任何账号时默认展示注册
-      if (!Store.listAccounts().length) setLoginMode('register');
-      showView('login');
+      // 未登录也进首页（访客模式可刷题，云同步时提示登录）
+      renderHome();
+      showView('home');
     }
 
     checkForUpdates(false); // 非阻塞检查更新
@@ -236,10 +236,10 @@ $('#update-now').onclick = async () => {
     $('#update-modal').classList.add('hidden');
     toast('题库已更新到 v' + v);
     renderHome();
-    showView(Store.who() ? 'home' : 'login');
+    showView('home');
   } catch (e) {
     toast('下载失败：' + (e.message || e));
-    showView(Store.who() ? 'home' : 'login');
+    showView('home');
   }
 };
 
@@ -580,10 +580,10 @@ $('#wrong-clear').onclick = () => {
 };
 
 // ==================== 全局导航 ====================
+/** 提示需登录才能用云端功能（不强制跳转，仅 toast 提醒） */
 function requireLogin() {
   if (Store.who()) return true;
-  showView('login');
-  toast('请先登录/注册以保存进度');
+  toast('登录后可云端同步进度（访客可正常刷题）');
   return false;
 }
 
@@ -592,9 +592,9 @@ $$('.tab').forEach(t => t.onclick = () => {
   if (tab === 'home') {
     if (Store.who()) { renderHome(); showView('home'); } else showView('login');
   }
-  else if (tab === 'practice') { if (requireLogin()) openSetup('practice'); }
-  else if (tab === 'wrong-book') { if (requireLogin()) { renderWrongBook(); showView('wrong'); } }
-  else if (tab === 'memorize') { if (requireLogin()) openSetup('memorize'); }
+  else if (tab === 'practice') { openSetup('practice'); }
+  else if (tab === 'wrong-book') { renderWrongBook(); showView('wrong'); }
+  else if (tab === 'memorize') { openSetup('memorize'); }
   else if (tab === 'me') showMe();
 });
 
@@ -602,7 +602,6 @@ $$('[data-back]').forEach(b => b.onclick = () => showView(b.dataset.back));
 
 $$('.mode-card').forEach(c => c.onclick = () => {
   const m = c.dataset.mode;
-  if (!requireLogin()) return;
   if (m === 'wrong-book') { renderWrongBook(); showView('wrong'); }
   else if (m === 'wrong-train') {
     const ids = Store.getWrongIds();
@@ -627,20 +626,32 @@ function goLoginPage() {
 // ==================== 账号中心 ====================
 function showMe() {
   const who = Store.who();
-  if (!who) { showView('login'); return; }
   const gs = Store.globalStats();
   gs.total = DB.total();
   const accounts = Store.listAccounts();
-  $('#me-desc').innerHTML = `
-    <div>
-      <b style="font-size:16px;color:var(--ink)">👤 当前账号：</b> <b style="color:var(--primary-d)">${esc(who)}</b><br><br>
-      <b>学习进度：</b><br>
-      · 总题数：<b>${gs.total}</b> · 已练习：<b>${gs.answered}</b> · 正确率：<b style="color:var(--accent2)">${gs.rate}%</b> · 错题：<b style="color:var(--danger)">${gs.wrong}</b><br><br>
-      <b>已注册账号（共 ${accounts.length} 个）：</b><br>
-      ${accounts.map(a => (a === who ? '✅ <b>' + esc(a) + '</b>（当前）' : '· ' + esc(a))).join('<br>') || '（暂无其他账号）'}
-    </div>`;
-  refreshCloudStatus();
-  $('#me-modal').classList.remove('hidden');
+  if (who) {
+    $('#me-desc').innerHTML = `
+      <div>
+        <b style="font-size:16px;color:var(--ink)">当前账号：</b> <b style="color:var(--primary-d)">${esc(who)}</b><br><br>
+        <b>学习进度：</b><br>
+        · 总题数：<b>${gs.total}</b> · 已练习：<b>${gs.answered}</b> · 正确率：<b style="color:var(--accent2)">${gs.rate}%</b> · 错题：<b style="color:var(--danger)">${gs.wrong}</b><br><br>
+        <b>已注册账号（共 ${accounts.length} 个）：</b><br>
+        ${accounts.map(a => (a === who ? '✅ <b>' + esc(a) + '</b>（当前）' : '· ' + esc(a))).join('<br>') || '（暂无其他账号）'}
+      </div>`;
+    refreshCloudStatus();
+  } else {
+    $('#me-desc').innerHTML = `
+      <div style="text-align:center;padding:10px 0">
+        <div style="font-size:15px;color:var(--ink);margin-bottom:8px">当前为<b style="color:var(--ink-2)">访客模式</b>，可正常刷题</div>
+        <div style="color:var(--ink-3);font-size:12px;margin-bottom:14px">登录后可云端同步进度、跨设备使用</div>
+        <button class="btn-primary" id="me-goto-login" style="margin:0 auto;max-width:200px">去登录 / 注册</button>
+      </div>`;
+    $('#me-cloud-state').textContent = '☁️ 云端同步：';
+    $('#me-cloud-detail').textContent = '未登录';
+    const goBtn = $('#me-goto-login');
+    if (goBtn) goBtn.onclick = () => showView('login');
+  }
+  showView('me');
 }
 
 function bindAccountCenter() {
@@ -724,12 +735,10 @@ function bindAccountCenter() {
   });
 
   $('#me-switch').onclick = () => {
-    $('#me-modal').classList.add('hidden');
     goLoginPage();
   };
 
   $('#me-logout').onclick = () => {
-    $('#me-modal').classList.add('hidden');
     stopCloudPushTimer();
     Store.logout();
     updateUserTag();
