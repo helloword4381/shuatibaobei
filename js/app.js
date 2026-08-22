@@ -31,6 +31,41 @@ function updateUserTag() {
 }
 
 let LOGIN_MODE = 'login'; // 'login' | 'register'
+// 云端定时同步器：每 60s 把当前账号本地进度 push 一次到云端
+let CLOUD_PUSH_TIMER = null;
+let CLOUD_LAST = { at: null, ok: null, msg: '' };
+
+function stopCloudPushTimer() {
+  if (CLOUD_PUSH_TIMER) { clearInterval(CLOUD_PUSH_TIMER); CLOUD_PUSH_TIMER = null; }
+}
+function startCloudPushTimer() {
+  stopCloudPushTimer();
+  if (!Store.cloudEnabled || !Store.cloudEnabled()) return;
+  // 登录成功后立刻推一次，避免等 60s
+  setTimeout(async () => {
+    const r = await Store.cloudPushNow();
+    CLOUD_LAST = { at: Date.now(), ok: !!r.ok, msg: r.ok ? '首次自动同步成功' : (r.reason || '云端可能暂不可用') };
+    refreshCloudStatus();
+  }, 800);
+  CLOUD_PUSH_TIMER = setInterval(async () => {
+    if (!Store.who()) return;
+    const r = await Store.cloudPushNow();
+    CLOUD_LAST = { at: Date.now(), ok: !!r.ok, msg: r.ok ? '已同步' : ((r.reason||'') + (r.error?': '+String(r.error.message||r.error):'')) };
+    refreshCloudStatus();
+  }, 60 * 1000);
+}
+function refreshCloudStatus() {
+  const state = document.getElementById('me-cloud-detail');
+  if (!state) return;
+  if (!Store.cloudEnabled || !Store.cloudEnabled()) { state.textContent = '未启用（本地模式）'; return; }
+  if (!Store.who()) { state.textContent = '未登录'; return; }
+  const s = CLOUD_LAST;
+  if (!s.at) { state.textContent = '已就绪，约每 60 秒自动同步一次'; return; }
+  const t = new Date(s.at);
+  const ts = t.getHours().toString().padStart(2,'0') + ':' + t.getMinutes().toString().padStart(2,'0') + ':' + t.getSeconds().toString().padStart(2,'0');
+  state.innerHTML = (s.ok ? '<span style="color:var(--accent2)">✅ ' + ts + ' ' + (s.msg||'成功') + '</span>'
+                                 : '<span style="color:var(--danger)">❌ ' + ts + ' ' + (s.msg||'失败') + '</span>');
+}
 $$('#view-login .chip[data-mode]').forEach(c => c.onclick = () => {
   LOGIN_MODE = c.dataset.mode;
   $$('#view-login .chip[data-mode]').forEach(x => x.classList.toggle('active', x === c));
@@ -54,6 +89,8 @@ async function submitAccount() {
       await Store.login(u, p, rem);
       toast('登录成功：' + u);
     }
+    // 登录成功：启动云端定时同步（每 60s push 一次）
+    startCloudPushTimer();
     // 记住账号也更新（注册默认记住）
     updateUserTag();
     renderAccountSwitcher();
@@ -124,6 +161,13 @@ async function boot() {
     const auto = Store.autoLogin();
     if (auto) {
       toast('已自动登录：' + auto.username);
+      // 自动登录后：立刻拉一次云端进度（防止别的设备最近有更新），再启动 60s 自动推送
+      if (Store.cloudEnabled && Store.cloudEnabled()) {
+        try { const p = await Store.cloudPullNow();
+              CLOUD_LAST = { at: Date.now(), ok: !!p.ok, msg: p.ok ? (p.nothing ? '自动登录：云端暂无新进度' : '自动登录：已合并云端进度') : '自动登录：同步失败，将用本地进度' };
+        } catch (_) {}
+      }
+      startCloudPushTimer();
       updateUserTag();
       renderAccountSwitcher();
       renderHome();
@@ -579,11 +623,37 @@ function showMe() {
       <b>已注册账号（共 ${accounts.length} 个）：</b><br>
       ${accounts.map(a => (a===who ? '✅ <b>'+a+'</b>（当前）' : '· '+a)).join('<br>') || '（暂无其他账号）'}
     </div>`;
+  refreshCloudStatus();
   $('#me-modal').classList.remove('hidden');
 }
 
 // 绑定账号中心按钮
 document.addEventListener('DOMContentLoaded', () => {
+  // 云端同步两个新按钮
+  const btnPush = $('#me-cloud-push');
+  const btnPull = $('#me-cloud-pull');
+  if (btnPush) btnPush.onclick = async () => {
+    if (!Store.who()) { toast('请先登录'); return; }
+    btnPush.disabled = true; const ot = btnPush.textContent; btnPush.textContent = '同步中…';
+    try {
+      const r = await Store.cloudPushNow();
+      CLOUD_LAST = { at: Date.now(), ok: !!r.ok, msg: r.ok ? '手动同步成功' : (r.reason || String(r.error?.message || r.error || '失败')) };
+      refreshCloudStatus();
+      toast(CLOUD_LAST.ok ? '已同步到云端：' + CLOUD_LAST.msg : '同步失败：' + CLOUD_LAST.msg);
+    } finally { btnPush.disabled = false; btnPush.textContent = ot; }
+  };
+  if (btnPull) btnPull.onclick = async () => {
+    if (!Store.who()) { toast('请先登录'); return; }
+    btnPull.disabled = true; const ot = btnPull.textContent; btnPull.textContent = '拉取中…';
+    try {
+      const r = await Store.cloudPullNow();
+      CLOUD_LAST = { at: Date.now(), ok: !!r.ok, msg: r.ok ? (r.nothing ? '云端暂无进度' : '已合并云端进度到本地') : (r.reason || String(r.error?.message || r.error || '失败')) };
+      refreshCloudStatus();
+      toast(CLOUD_LAST.ok ? CLOUD_LAST.msg : '拉取失败：' + CLOUD_LAST.msg);
+      if (CLOUD_LAST.ok) { updateUserTag(); renderAccountSwitcher(); if ($('#view-home').classList.contains('active')) renderHome(); }
+    } finally { btnPull.disabled = false; btnPull.textContent = ot; }
+  };
+
   $('#me-export').onclick = () => {
     try {
       const dump = Store.exportAll();
@@ -640,6 +710,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('#me-logout').onclick = () => {
     $('#me-modal').classList.add('hidden');
+    // 退出登录：停掉云端同步定时器
+    stopCloudPushTimer();
     Store.logout();
     updateUserTag();
     toast('已退出登录');

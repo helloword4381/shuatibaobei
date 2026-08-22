@@ -1,5 +1,105 @@
-/* store.js — localStorage 状态：用户/错题/统计/设置（按账号命名空间隔离） */
-const Store = (() => {
+/* store.js — localStorage 状态：用户/错题/统计/设置（按账号命名空间隔离）+ Supabase 云端同步 */
+(function () {
+  'use strict';
+
+  // ========== Supabase 云端配置（项目 URL 从 anon key JWT 的 ref 字段反推得到）==========
+  const CLOUD = {
+    ENABLED: true,
+    URL: 'https://nvhgbkqpfgmkntjsigij.supabase.co',
+    ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im52aGticWtwZmdta250anNpZ2lqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczNDQzNzcsImV4cCI6MjEwMjkyMDM3N30.uXY2blnzOK5axCqO95QkWF765y4Kuhs78G3knh3llIc'
+  };
+
+  function cloudHeaders() {
+    return {
+      'apikey': CLOUD.ANON_KEY,
+      'Authorization': 'Bearer ' + CLOUD.ANON_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=minimal'
+    };
+  }
+
+  // 调用 RPC（Postgres 存储过程）
+  async function cloudRPC(name, params) {
+    const res = await fetch(CLOUD.URL + '/rest/v1/rpc/' + name, {
+      method: 'POST',
+      headers: cloudHeaders(),
+      body: JSON.stringify(params || {})
+    });
+    if (!res.ok) {
+      let msg = 'HTTP ' + res.status;
+      try { const t = await res.text(); if (t) msg += ': ' + t; } catch (_) {}
+      throw new Error('云端 [' + name + '] 失败：' + msg);
+    }
+    let body = null;
+    try { body = await res.json(); } catch (_) {}
+    return body;
+  }
+
+  // 查询 public.users 表，返回 {username, pwd_hash, salt} 或 null
+  async function cloudGetUserRecord(username) {
+    const u = encodeURIComponent(String(username || '').toLowerCase());
+    const res = await fetch(CLOUD.URL + '/rest/v1/users?username=eq.' + u + '&select=username,pwd_hash,salt&limit=1', {
+      method: 'GET',
+      headers: {
+        'apikey': CLOUD.ANON_KEY,
+        'Authorization': 'Bearer ' + CLOUD.ANON_KEY,
+        'Accept': 'application/json'
+      }
+    });
+    if (!res.ok) {
+      if (res.status === 404) return null; // 没建表也不报硬错
+      throw new Error('云端查询用户失败：HTTP ' + res.status);
+    }
+    const arr = await res.json();
+    return Array.isArray(arr) && arr.length ? arr[0] : null;
+  }
+
+  // 查询 public.progress 表（答题/错题 blob）
+  async function cloudGetProgress(username) {
+    const u = encodeURIComponent(String(username || '').toLowerCase());
+    const res = await fetch(CLOUD.URL + '/rest/v1/progress?username=eq.' + u + '&select=wrong,hist,settings,updated_at&limit=1', {
+      method: 'GET',
+      headers: {
+        'apikey': CLOUD.ANON_KEY,
+        'Authorization': 'Bearer ' + CLOUD.ANON_KEY,
+        'Accept': 'application/json'
+      }
+    });
+    if (!res.ok) return null;
+    const arr = await res.json();
+    if (!Array.isArray(arr) || !arr.length) return null;
+    return arr[0];
+  }
+
+  // 云端注册（POST /rpc/register_user），失败返回 null，成功返回 {ok:true}
+  async function cloudRegisterUser(username, pwdHash, salt) {
+    try {
+      await cloudRPC('register_user', {
+        p_username: String(username || '').toLowerCase(),
+        p_pwd_hash: pwdHash,
+        p_salt: salt
+      });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e };
+    }
+  }
+
+  // 云端推送进度（POST /rpc/sync_progress_to_cloud）
+  async function cloudPushProgress(username, wrongBlob, histBlob, settingsBlob) {
+    try {
+      await cloudRPC('sync_progress_to_cloud', {
+        p_username: String(username || '').toLowerCase(),
+        p_wrong: wrongBlob || {},
+        p_hist: histBlob || {},
+        p_settings: settingsBlob || {}
+      });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e };
+    }
+  }
+
   // ============== 账号模块 ==============
   const K_USERS = 'sdzj_users';   // 全量用户表 { username: { pwdHash, createdAt, salt } }
   const K_REMEMBER = 'sdzj_remember'; // 记住的账号 { username, pwdHash (可选) }
@@ -38,22 +138,97 @@ const Store = (() => {
     const pwdHash = await sha256(salt + '::' + password);
     users[username] = { pwdHash, salt, createdAt: Date.now() };
     setUsers(users);
+
+    // 云端注册：失败不阻断（离线/表未建）但给控制台记录
+    if (CLOUD.ENABLED) {
+      try {
+        const r = await cloudRegisterUser(username, pwdHash, salt);
+        if (!r.ok) console.warn('云端注册失败（本地已注册成功）：', r.error);
+      } catch (_) {}
+    }
     return await login(username, password, true);
   }
 
   async function login(username, password, remember) {
     username = (username || '').trim();
     const users = getUsers();
-    const u = users[username];
-    if (!u) throw new Error('用户不存在');
+    let u = users[username];
+
+    // ========== 云端优先校验 ==========
+    // 1) 如果本地没这个账号，但云端存在：从云端拉回用户表再落本地（允许"先在电脑注册→手机直接登录"场景）
+    if (!u && CLOUD.ENABLED) {
+      try {
+        const cloudUser = await cloudGetUserRecord(username);
+        if (cloudUser) {
+          // 本地补录用户表
+          users[username] = { pwdHash: cloudUser.pwd_hash, salt: cloudUser.salt, createdAt: Date.now(), fromCloud: true };
+          setUsers(users);
+          u = users[username];
+        }
+      } catch (e) {
+        console.warn('云端查询用户失败（尝试本地降级）：', e);
+      }
+    }
+
+    if (!u) throw new Error('用户不存在（若注册/登录在其他设备，请先联网后再登录一次）');
+
     const pwdHash = await sha256(u.salt + '::' + password);
     if (pwdHash !== u.pwdHash) throw new Error('密码错误');
+
     currentUser = username;
+
+    // ========== 登录后：拉云端进度合并到本地 ==========
+    if (CLOUD.ENABLED) {
+      try {
+        const cloudProg = await cloudGetProgress(username);
+        if (cloudProg) {
+          // merge 模式：云端 blob 和本地 blob 各自按"取大值/并集"合并
+          const ns = 'sdzj_' + username + '_';
+          mergeRemoteBlob(ns + 'wrong', cloudProg.wrong, mergeWrong);
+          mergeRemoteBlob(ns + 'hist', cloudProg.hist, mergeHist);
+          mergeRemoteBlob(ns + 'set', cloudProg.settings, (l, r) => Object.assign({}, r || {}, l || {}));
+        }
+      } catch (e) {
+        console.warn('拉取云端进度失败（离线也能正常用本地进度）：', e);
+      }
+    }
+
     // 记住账号
     const prev = load(K_REMEMBER, null);
     if (remember) save(K_REMEMBER, { username, autoLogin: true });
     else if (prev && prev.username === username) save(K_REMEMBER, { username, autoLogin: false });
     return { username };
+  }
+
+  // 工具：把云端拉回的 blob 合并回 localStorage（按提供的 merge fn）
+  function mergeRemoteBlob(key, remoteBlob, mergeFn) {
+    let local; try { const v = localStorage.getItem(key); local = v ? JSON.parse(v) : null; } catch (_) { local = null; }
+    const merged = mergeFn(local, remoteBlob);
+    try { localStorage.setItem(key, JSON.stringify(merged || {})); } catch (_) {}
+  }
+  function mergeWrong(local, remote) {
+    const merged = Object.assign({}, local || {});
+    for (const id of Object.keys(remote || {})) {
+      const l = merged[id], r = remote[id];
+      if (!l) merged[id] = r;
+      else merged[id] = { count: Math.max(+l.count|0, +r.count|0), ts: Math.max(+l.ts|0, +r.ts|0), bank: l.bank || r.bank };
+    }
+    return merged;
+  }
+  function mergeHist(local, remote) {
+    const merged = Object.assign({}, local || {});
+    for (const id of Object.keys(remote || {})) {
+      const l = merged[id], r = remote[id];
+      if (!l) merged[id] = r;
+      else merged[id] = {
+        seen: Math.max(+l.seen|0, +r.seen|0),
+        correct: Math.max(+l.correct|0, +r.correct|0),
+        wrong: Math.max(+l.wrong|0, +r.wrong|0),
+        ts: Math.max(+l.ts|0, +r.ts|0),
+        bank: l.bank || r.bank
+      };
+    }
+    return merged;
   }
 
   function autoLogin() {
@@ -296,7 +471,44 @@ const Store = (() => {
     return JSON.stringify(dump, null, 2);
   }
 
-  return {
+  // ========== 云端同步对外 API ==========
+  function cloudEnabled() { return !!CLOUD.ENABLED; }
+
+  /** 把当前登录用户的本地进度推一次到云端（每 60s 会被 app.js 调用） */
+  async function cloudPushNow() {
+    if (!CLOUD.ENABLED) return { ok: false, reason: 'cloud disabled' };
+    const u = who();
+    if (!u) return { ok: false, reason: 'guest' };
+    try {
+      const wrongBlob = load('sdzj_' + u + '_wrong', {});
+      const histBlob = load('sdzj_' + u + '_hist', {});
+      const settingsBlob = load('sdzj_' + u + '_set', {});
+      return await cloudPushProgress(u, wrongBlob, histBlob, settingsBlob);
+    } catch (e) {
+      return { ok: false, error: e };
+    }
+  }
+
+  /** 手动拉一次云端进度并合并 */
+  async function cloudPullNow() {
+    if (!CLOUD.ENABLED) return { ok: false, reason: 'cloud disabled' };
+    const u = who();
+    if (!u) return { ok: false, reason: 'guest' };
+    try {
+      const cloudProg = await cloudGetProgress(u);
+      if (!cloudProg) return { ok: true, nothing: true };
+      const ns = 'sdzj_' + u + '_';
+      mergeRemoteBlob(ns + 'wrong', cloudProg.wrong, mergeWrong);
+      mergeRemoteBlob(ns + 'hist', cloudProg.hist, mergeHist);
+      mergeRemoteBlob(ns + 'set', cloudProg.settings, (l, r) => Object.assign({}, r || {}, l || {}));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e };
+    }
+  }
+
+  // ========== 挂到 window.Store ==========
+  window.Store = {
     // 用户
     register, login, autoLogin, rememberUsername, logout, who, isGuest, switchUser, listAccounts, sha256,
     // 业务
@@ -306,5 +518,7 @@ const Store = (() => {
     settings, setSettings,
     // 跨设备迁移
     exportAll, importAll, toJSONFile,
+    // 云端同步
+    cloudEnabled, cloudPushNow, cloudPullNow,
   };
 })();

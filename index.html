@@ -229,7 +229,12 @@
       <div class="modal-ic">👤</div>
       <h3>账号中心</h3>
       <div id="me-desc" style="text-align:left;font-size:13px;color:var(--ink-2);line-height:1.7;margin:0 0 18px"></div>
+      <div style="font-size:12px;color:var(--ink-2);margin-bottom:12px;padding:10px 12px;border-radius:10px;background:var(--bg-2);line-height:1.7">
+        <b id="me-cloud-state">☁️ 云端同步：</b><span id="me-cloud-detail">检测中…</span>
+      </div>
       <div class="me-actions">
+        <button class="btn-ghost" id="me-cloud-push">☁️ 立即同步到云端</button>
+        <button class="btn-ghost" id="me-cloud-pull">⤵️ 拉取并合并云端进度</button>
         <button class="btn-ghost" id="me-export">📤 导出所有数据</button>
         <label class="btn-ghost" for="me-import-file">📥 导入数据</label>
         <input id="me-import-file" type="file" accept=".json,application/json" style="display:none">
@@ -237,7 +242,7 @@
         <button class="btn-primary" id="me-logout">退出登录</button>
       </div>
       <div style="font-size:12px;color:var(--ink-3);margin-top:14px;line-height:1.6">
-        提示：导出的 JSON 文件包含所有账号的密码散列和答题进度，可用于在其他设备登录相同账号。请妥善保管文件。
+        说明：已接入 Supabase 免费云端数据库。<b>每 60 秒自动备份一次进度到云端</b>；在电脑注册的账号，手机登录同一账号会自动拉取密码和进度；离线时先用本地，联网后再次同步即可。
       </div>
     </div>
   </div>
