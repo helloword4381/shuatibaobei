@@ -1,5 +1,5 @@
 // sw.js — PWA 离线缓存
-const CACHE = 'shuatibaobei-v17';
+const CACHE = 'shuatibaobei-v18';
 const SHELL = [
   './',
   './index.html',
@@ -32,9 +32,9 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  // GitHub 原始 / 题库 manifest：永远网络优先（保证检测到新版本的能力）
+  // GitHub 原始 / 题库 manifest / 所有 .txt 验证文件：永远网络优先（保证微信/搜索引擎域名校验能通过）
   if (url.hostname.includes('githubusercontent.com') || url.hostname.includes('gitmirror')
-      || url.pathname.endsWith('/manifest.json')) {
+      || url.pathname.endsWith('/manifest.json') || url.pathname.endsWith('.txt')) {
     e.respondWith(fetch(req).catch(() => caches.match(req)));
     return;
   }
