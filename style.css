@@ -347,3 +347,74 @@ input[type=range]{width:100%;accent-color:var(--primary)}
   .as-cell.correct.active{outline-color:#15803d}
   .as-cell.wrong.active{outline-color:#b91c1c}
 }
+
+/* ============ 账号中心 modal ============ */
+.modal.wide{max-width:480px}
+.modal.wide h3{color:var(--primary-d)}
+.me-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.me-actions .btn-ghost,.me-actions .btn-primary{margin-top:0;padding:11px 10px;width:100%;font-size:14px;display:flex;align-items:center;justify-content:center;gap:6px}
+.me-actions .btn-primary{grid-column:1 / -1;padding:13px}
+@media(min-width:1100px){
+  .modal.wide{max-width:560px;padding:28px}
+  .me-actions{grid-template-columns:1fr 1fr 1fr}
+  .me-actions .btn-primary{grid-column:3 / 4}
+}
+
+/* ============ PC ≥1100px 全页面加宽 & 多列 ============ */
+@media(min-width:1100px){
+  /* 视图内 padding 更大：外层已经在顶部 .view 设置 24/28px，这里主要加宽内部组件 */
+  .section-title{font-size:14px;margin:22px 2px 12px}
+
+  /* 首页：顶部统计 + 模式卡片 4 列 + 题库列表 2 列 */
+  .home-stats{gap:16px}
+  .home-stats .stat-card{padding:22px 14px;border-radius:18px}
+  .home-stats .num{font-size:32px}
+  .home-stats .lbl{font-size:13px}
+
+  .mode-grid{grid-template-columns:repeat(4,1fr);gap:16px}
+  .mode-card{padding:20px 18px;border-radius:20px}
+  .mode-card .mode-ic{font-size:30px}
+  .mode-card .mode-name{font-size:17px;margin-top:10px}
+  .mode-card .mode-desc{font-size:13px;margin-top:4px}
+
+  /* 题库列表 2 列 */
+  #bank-list.list-card{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  #bank-list .list-item{padding:18px;border-radius:18px}
+  #bank-list .li-ic{width:44px;height:44px;border-radius:13px;font-size:20px}
+  #bank-list .li-title{font-size:15px}
+
+  /* 配置页：panel 两栏 */
+  #view-setup .panel{display:grid;grid-template-columns:1fr 1fr;gap:0 28px;padding:22px 24px;border-radius:20px}
+  #view-setup .field-label{margin-top:0}
+  #view-setup .select,#view-setup input[type=range],#view-setup .chip-row,#view-setup #setup-count-val{grid-column:1 / -1}
+  #view-setup .field-label:nth-of-type(1),
+  #view-setup #setup-bank{grid-column:1}
+  #view-setup .field-label:nth-of-type(2),
+  #view-setup #setup-types{grid-column:2}
+  #view-setup .setup-head h2{font-size:20px}
+  #view-setup #setup-start{grid-column:1 / -1;margin-top:6px;padding:16px;font-size:17px}
+  #view-setup .select,#view-setup .input{padding:14px 16px;font-size:15px;border-radius:14px}
+
+  /* 结果页：头部左右横排，错题列表 2 列 */
+  .result-head{display:grid;grid-template-columns:auto 1fr;gap:28px;padding:24px 0;align-items:center}
+  .result-ring{width:180px;height:180px}
+  .result-ring span{font-size:40px}
+  .result-meta{font-size:16px;text-align:left}
+  .result-actions{grid-column:2;justify-content:flex-start}
+
+  #result-wrongs.list-card{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  #result-wrongs .list-item{border-radius:16px}
+
+  /* 错题集：2 列列表 */
+  #wrong-list.list-card{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  #wrong-list .list-item{border-radius:16px;padding:16px}
+
+  /* 背题卡片更宽、更大 */
+  #view-memorize{display:none}
+  #view-memorize.active{display:block;max-width:1100px;margin:0 auto}
+  .mem-card{padding:32px 36px}
+  .mem-stem{font-size:22px;line-height:1.8}
+  .mem-answer{font-size:17px;line-height:1.9}
+  .mem-tag{font-size:13px;padding:6px 14px}
+  .mem-analysis{font-size:14px}
+}

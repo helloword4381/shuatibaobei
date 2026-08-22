@@ -180,6 +180,122 @@ const Store = (() => {
     return picked;
   }
 
+  // ============== 导入 / 导出（用于跨设备迁移） ==============
+  const NS_PREFIX = 'sdzj_';
+  const NS_KEYS = [K_USERS, K_REMEMBER, 'current-user']; // 账号相关固定 key
+
+  /** 导出所有账号 + 各账号的错题/历史/设置。返回可 JSON.stringify 的对象 */
+  function exportAll() {
+    const dump = { version: 1, exportedAt: Date.now(), users: {}, data: {}, remember: null };
+    // 1. 全量用户表（含 pwdHash/salt，保证导入后密码能校验）
+    dump.users = getUsers();
+    // 2. 记住的账号信息
+    dump.remember = load(K_REMEMBER, null);
+    // 3. 对每个账号分别导出 wrong/hist/set 命名空间数据
+    for (const u of Object.keys(dump.users)) {
+      const ns = NS_PREFIX + u + '_';
+      const dataOfUser = {};
+      for (const suffix of Object.values(K)) {
+        const fullKey = ns + suffix;
+        const v = localStorage.getItem(fullKey);
+        if (v != null) { try { dataOfUser[suffix] = JSON.parse(v); } catch (_) {} }
+      }
+      dump.data[u] = dataOfUser;
+    }
+    // 4. 访客也顺手导出（可选，不强求）
+    const guestNs = NS_PREFIX + NS_GUEST + '_';
+    const guestData = {};
+    for (const suffix of Object.values(K)) {
+      const fullKey = guestNs + suffix;
+      const v = localStorage.getItem(fullKey);
+      if (v != null) { try { guestData[suffix] = JSON.parse(v); } catch (_) {} }
+    }
+    if (Object.keys(guestData).length) dump.data[NS_GUEST] = guestData;
+    return dump;
+  }
+
+  /**
+   * 导入 exportAll 导出的对象
+   * @param {*} dump 
+   * @param {object} opts
+   *   mode: 'merge'  默认：同名账号双方的数据合并（错题并集、统计取 max(seen/correct/wrong)）
+   *         'replace'：同名账号本地旧数据被导入覆盖
+   * @returns { importedUsers: string[], failed: string[] } 导入了哪些账号
+   */
+  function importAll(dump, opts) {
+    opts = opts || { mode: 'merge' };
+    if (!dump || typeof dump !== 'object' || !dump.users || typeof dump.users !== 'object') {
+      throw new Error('文件格式不合法：缺少 users 字段');
+    }
+    const imported = []; const failed = [];
+    const oldUsers = getUsers();
+    const newUsers = Object.assign({}, oldUsers);
+    // 先合并用户表：新账号直接加，同名账号保留密码不变（导入的密码也可能不一样，都保留本地的密码为准，
+    // 因为用户通常自己记得自己的密码；如果本地无此账号，就用导入的 pwdHash/salt）
+    for (const u of Object.keys(dump.users)) {
+      if (!newUsers[u]) newUsers[u] = dump.users[u];
+    }
+    setUsers(newUsers);
+
+    // 再合并每个账号的数据
+    for (const u of Object.keys(dump.data || {})) {
+      try {
+        const dataOfUser = dump.data[u];
+        const ns = NS_PREFIX + u + '_';
+        for (const suffix of Object.values(K)) {
+          if (!(suffix in dataOfUser)) continue;
+          const fullKey = ns + suffix;
+          if (opts.mode === 'replace') {
+            save(fullKey, dataOfUser[suffix]);
+            continue;
+          }
+          // merge 模式：不同类型分别合并
+          const local = load(fullKey, null) || {};
+          const remote = dataOfUser[suffix];
+          if (suffix === K.wrong) {
+            // 错题：并集，取更高的 count / 更晚的 ts
+            const merged = Object.assign({}, local);
+            for (const id of Object.keys(remote)) {
+              const l = merged[id], r = remote[id];
+              if (!l) merged[id] = r;
+              else merged[id] = { count: Math.max(+l.count|0, +r.count|0), ts: Math.max(+l.ts|0, +r.ts|0), bank: l.bank || r.bank };
+            }
+            save(fullKey, merged);
+          } else if (suffix === K.hist) {
+            // hist：逐题取 max(seen/correct/wrong/ts)
+            const merged = Object.assign({}, local);
+            for (const id of Object.keys(remote)) {
+              const l = merged[id], r = remote[id];
+              if (!l) merged[id] = r;
+              else merged[id] = {
+                seen: Math.max(+l.seen|0, +r.seen|0),
+                correct: Math.max(+l.correct|0, +r.correct|0),
+                wrong: Math.max(+l.wrong|0, +r.wrong|0),
+                ts: Math.max(+l.ts|0, +r.ts|0),
+                bank: l.bank || r.bank
+              };
+            }
+            save(fullKey, merged);
+          } else if (suffix === K.set) {
+            save(fullKey, Object.assign({}, remote, local)); // 本地优先
+          } else {
+            save(fullKey, Object.assign({}, local || {}, remote || {}));
+          }
+        }
+        imported.push(u);
+      } catch (e) {
+        failed.push(u + '(' + (e.message || e) + ')');
+      }
+    }
+    // 导入 remember：只导入当前本地没有记住任何账号时才写，避免覆盖用户自己选中的"记住"
+    if (dump.remember && !load(K_REMEMBER, null)) save(K_REMEMBER, dump.remember);
+    return { imported, failed };
+  }
+
+  function toJSONFile(dump) {
+    return JSON.stringify(dump, null, 2);
+  }
+
   return {
     // 用户
     register, login, autoLogin, rememberUsername, logout, who, isGuest, switchUser, listAccounts, sha256,
@@ -187,6 +303,8 @@ const Store = (() => {
     getWrongIds, isWrong, addWrong, removeWrong, clearWrong, wrongCount,
     recordAnswer, qStat, doneIds, isDone, globalStats, bankStats,
     smartWeights, pickWeighted,
-    settings, setSettings
+    settings, setSettings,
+    // 跨设备迁移
+    exportAll, importAll, toJSONFile,
   };
 })();

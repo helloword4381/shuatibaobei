@@ -555,57 +555,97 @@ $$('.mode-card').forEach(c => c.onclick = () => {
   else openSetup('practice');
 });
 
+function goLoginPage() {
+  showView('login');
+  const rem = Store.rememberUsername();
+  if (rem) $('#acc-user').value = rem;
+  $('#acc-pwd').value = '';
+  LOGIN_MODE = 'login';
+  $$('#view-login .chip[data-mode]').forEach(x => x.classList.toggle('active', x.dataset.mode === 'login'));
+  $('#acc-submit').textContent = '登 录';
+  renderAccountSwitcher();
+}
+
 function showMe() {
-  // 账号中心：显示当前账号 + 操作
   const who = Store.who();
   if (!who) { showView('login'); return; }
   const gs = Store.globalStats(); gs.total = DB.total();
   const accounts = Store.listAccounts();
-  // 弹一个简易 modal 展示"我的"
-  $('#update-desc').innerHTML = `
-    <div style="text-align:left">
-      <b style="font-size:17px">👤 当前账号：</b> ${who}<br><br>
+  $('#me-desc').innerHTML = `
+    <div>
+      <b style="font-size:16px;color:var(--ink)">👤 当前账号：</b> <b style="color:var(--primary-d)">${who}</b><br><br>
       <b>学习进度：</b><br>
-      · 总题数：${gs.total}<br>
-      · 已练习：${gs.answered}　正确率：${gs.rate}%　错题：${gs.wrong}<br><br>
-      <b>已注册账号：</b> ${accounts.map(a => (a===who ? '✅ '+a : '· '+a)).join('<br>') || '（无其他）'}
+      · 总题数：<b>${gs.total}</b> · 已练习：<b>${gs.answered}</b> · 正确率：<b style="color:var(--accent2)">${gs.rate}%</b> · 错题：<b style="color:var(--danger)">${gs.wrong}</b><br><br>
+      <b>已注册账号（共 ${accounts.length} 个）：</b><br>
+      ${accounts.map(a => (a===who ? '✅ <b>'+a+'</b>（当前）' : '· '+a)).join('<br>') || '（暂无其他账号）'}
     </div>`;
-  $('#update-modal').classList.remove('hidden');
-  // 改一下按钮文字
-  $('#update-later').textContent = '切账号';
-  $('#update-now').textContent = '退出登录';
-  $('#update-later').onclick = () => {
-    $('#update-later').textContent = '稍后';
-    $('#update-now').textContent = '立即更新';
-    $('#update-modal').classList.add('hidden');
-    showView('login');
-    // 预填记住的账号
-    const rem = Store.rememberUsername();
-    if (rem) $('#acc-user').value = rem;
-    $('#acc-pwd').value = '';
-    // 默认切到登录模式
-    LOGIN_MODE = 'login';
-    $$('#view-login .chip[data-mode]').forEach(x => x.classList.toggle('active', x.dataset.mode === 'login'));
-    $('#acc-submit').textContent = '登 录';
-    renderAccountSwitcher();
+  $('#me-modal').classList.remove('hidden');
+}
+
+// 绑定账号中心按钮
+document.addEventListener('DOMContentLoaded', () => {
+  $('#me-export').onclick = () => {
+    try {
+      const dump = Store.exportAll();
+      const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      const stamp = new Date(); const y = stamp.getFullYear();
+      const m = String(stamp.getMonth()+1).padStart(2,'0'); const d = String(stamp.getDate()).padStart(2,'0');
+      a.download = `刷题大专家-数据备份-${y}${m}${d}.json`;
+      a.href = URL.createObjectURL(blob);
+      document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+      const n = Object.keys(dump.users).length;
+      toast(`已导出 ${n} 个账号的数据，请在另一台设备的"账号中心-导入数据"里导入`);
+    } catch (e) {
+      toast('导出失败：' + (e.message || String(e)));
+    }
   };
-  $('#update-now').onclick = () => {
-    $('#update-later').textContent = '稍后';
-    $('#update-now').textContent = '立即更新';
-    $('#update-modal').classList.add('hidden');
+
+  $('#me-import-file').addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = ''; // reset，允许再次选同一文件
+    if (!f) return;
+    const fr = new FileReader();
+    fr.onload = ev => {
+      try {
+        let dump; try { dump = JSON.parse(ev.target.result); } catch(_){ throw new Error('文件不是合法的 JSON'); }
+        const r = Store.importAll(dump, { mode: 'merge' });
+        let msg = `导入完成：成功 ${r.imported.length} 个账号`;
+        if (r.failed.length) msg += '，失败 ' + r.failed.length;
+        toast(msg);
+        // 刷新 UI（账号列表、当前进度）
+        updateUserTag(); renderAccountSwitcher();
+        if (Store.who()) renderHome();
+        // 如果当前在首页，重新渲染
+        if ($('#view-home').classList.contains('active')) renderHome();
+        // 展示细节
+        setTimeout(() => alert(
+          '导入完成：\n' +
+          '成功：' + (r.imported.length?r.imported.join('、'):'（无）') + '\n' +
+          '失败：' + (r.failed.length?r.failed.join('；'):'（无）') + '\n\n' +
+          '如果导入的账号密码你清楚，可以直接在登录页输入密码登录。\n如果想直接切到该账号且勾选了"记住"，下次打开会自动登录。'
+        ), 200);
+      } catch (err) {
+        toast('导入失败：' + (err.message || String(err)));
+      }
+    };
+    fr.onerror = () => toast('读取文件失败');
+    fr.readAsText(f);
+  });
+
+  $('#me-switch').onclick = () => {
+    $('#me-modal').classList.add('hidden');
+    goLoginPage();
+  };
+
+  $('#me-logout').onclick = () => {
+    $('#me-modal').classList.add('hidden');
     Store.logout();
     updateUserTag();
     toast('已退出登录');
-    showView('login');
-    const rem = Store.rememberUsername();
-    if (rem) $('#acc-user').value = rem;
-    $('#acc-pwd').value = '';
-    LOGIN_MODE = 'login';
-    $$('#view-login .chip[data-mode]').forEach(x => x.classList.toggle('active', x.dataset.mode === 'login'));
-    $('#acc-submit').textContent = '登 录';
-    renderAccountSwitcher();
+    goLoginPage();
   };
-}
+});
 
 boot();
 

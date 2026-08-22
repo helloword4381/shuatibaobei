@@ -223,6 +223,25 @@
     </div>
   </div>
 
+  <!-- 账号中心弹窗 -->
+  <div class="modal-mask hidden" id="me-modal">
+    <div class="modal wide" id="me-box">
+      <div class="modal-ic">👤</div>
+      <h3>账号中心</h3>
+      <div id="me-desc" style="text-align:left;font-size:13px;color:var(--ink-2);line-height:1.7;margin:0 0 18px"></div>
+      <div class="me-actions">
+        <button class="btn-ghost" id="me-export">📤 导出所有数据</button>
+        <label class="btn-ghost" for="me-import-file">📥 导入数据</label>
+        <input id="me-import-file" type="file" accept=".json,application/json" style="display:none">
+        <button class="btn-ghost" id="me-switch">切换账号</button>
+        <button class="btn-primary" id="me-logout">退出登录</button>
+      </div>
+      <div style="font-size:12px;color:var(--ink-3);margin-top:14px;line-height:1.6">
+        提示：导出的 JSON 文件包含所有账号的密码散列和答题进度，可用于在其他设备登录相同账号。请妥善保管文件。
+      </div>
+    </div>
+  </div>
+
   <!-- Toast -->
   <div class="toast" id="toast"></div>
 </div>

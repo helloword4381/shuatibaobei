@@ -1,5 +1,5 @@
 // sw.js — PWA 离线缓存
-const CACHE = 'shuatibaobei-v4';
+const CACHE = 'shuatibaobei-v5';
 const SHELL = [
   './',
   './index.html',
