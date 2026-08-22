@@ -1,28 +1,53 @@
-/* app.js — 刷题大专家 主逻辑（含用户系统） */
+/* app.js — 刷题大专家 主逻辑
+ * 职责：视图路由、账号 UI、答题引擎、背题/错题、更新检测、云端同步调度
+ * 依赖：db.js 提供 DB、store.js 提供 Store（均为全局变量）
+ */
+
+// ==================== 基础工具 ====================
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
-const el = (t, cls, html) => { const e = document.createElement(t); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+
+/** 创建元素；html 为 HTML 字符串，动态内容必须先经 esc() 转义 */
+const el = (t, cls, html) => {
+  const e = document.createElement(t);
+  if (cls) e.className = cls;
+  if (html != null) e.innerHTML = html;
+  return e;
+};
+
+/** HTML 转义：题库/用户输入/云端返回的数据拼进 innerHTML 前必须经过它 */
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function toast(msg) {
-  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2000);
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove('show'), 2000);
 }
+
+// ==================== 视图路由 ====================
+// 视图名 → 底部 tab 名（无对应 tab 的页面不映射）
+const TAB_OF_VIEW = { home: 'home', practice: 'practice', 'wrong-book': 'wrong-book', memorize: 'memorize' };
 
 function showView(name) {
   $$('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
-  // 登录页没有对应 tab
-  if (name === 'login') { /* no tab */ }
-  else {
-    const tab = name === 'wrong-book' ? 'wrong-book' :
-                name === 'memorize' ? 'memorize' :
-                name === 'home' ? 'home' :
-                name === 'practice' ? 'practice' : null;
+  if (name !== 'login') { // 登录页保持当前 tab 高亮不变
+    const tab = TAB_OF_VIEW[name] || null;
     $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === tab));
   }
   window.scrollTo(0, 0);
 }
 
-// ============ 用户：登录/注册 UI & boot 流程 ============
+/** 题型中文标签（type 与 source_type 通用） */
+function typeLabel(t) {
+  return { single: '单选', multiple: '多选', judge: '判断', short: '简答', short_multi: '简答' }[t] || t;
+}
+
+// ==================== 账号 UI（登录 / 注册 / 切换） ====================
+let LOGIN_MODE = 'login'; // 'login' | 'register'
+
 function updateUserTag() {
   const tag = $('#user-tag');
   const u = Store.who();
@@ -30,50 +55,14 @@ function updateUserTag() {
   else { tag.style.display = 'none'; }
 }
 
-let LOGIN_MODE = 'login'; // 'login' | 'register'
-// 云端定时同步器：每 60s 把当前账号本地进度 push 一次到云端
-let CLOUD_PUSH_TIMER = null;
-let CLOUD_LAST = { at: null, ok: null, msg: '' };
+function setLoginMode(mode) {
+  LOGIN_MODE = mode;
+  $$('#view-login .chip[data-mode]').forEach(x => x.classList.toggle('active', x.dataset.mode === mode));
+  $('#acc-submit').textContent = mode === 'login' ? '登 录' : '注 册 并 登 录';
+  if (mode === 'register' && !$('#acc-user').value.trim()) $('#acc-pwd').value = '';
+}
 
-function stopCloudPushTimer() {
-  if (CLOUD_PUSH_TIMER) { clearInterval(CLOUD_PUSH_TIMER); CLOUD_PUSH_TIMER = null; }
-}
-function startCloudPushTimer() {
-  stopCloudPushTimer();
-  if (!Store.cloudEnabled || !Store.cloudEnabled()) return;
-  // 登录成功后立刻推一次，避免等 60s
-  setTimeout(async () => {
-    const r = await Store.cloudPushNow();
-    CLOUD_LAST = { at: Date.now(), ok: !!r.ok, msg: r.ok ? '首次自动同步成功' : (r.reason || '云端可能暂不可用') };
-    refreshCloudStatus();
-  }, 800);
-  CLOUD_PUSH_TIMER = setInterval(async () => {
-    if (!Store.who()) return;
-    const r = await Store.cloudPushNow();
-    CLOUD_LAST = { at: Date.now(), ok: !!r.ok, msg: r.ok ? '已同步' : ((r.reason||'') + (r.error?': '+String(r.error.message||r.error):'')) };
-    refreshCloudStatus();
-  }, 60 * 1000);
-}
-function refreshCloudStatus() {
-  const state = document.getElementById('me-cloud-detail');
-  if (!state) return;
-  if (!Store.cloudEnabled || !Store.cloudEnabled()) { state.textContent = '未启用（本地模式）'; return; }
-  if (!Store.who()) { state.textContent = '未登录'; return; }
-  const s = CLOUD_LAST;
-  if (!s.at) { state.textContent = '已就绪，约每 60 秒自动同步一次'; return; }
-  const t = new Date(s.at);
-  const ts = t.getHours().toString().padStart(2,'0') + ':' + t.getMinutes().toString().padStart(2,'0') + ':' + t.getSeconds().toString().padStart(2,'0');
-  state.innerHTML = (s.ok ? '<span style="color:var(--accent2)">✅ ' + ts + ' ' + (s.msg||'成功') + '</span>'
-                                 : '<span style="color:var(--danger)">❌ ' + ts + ' ' + (s.msg||'失败') + '</span>');
-}
-$$('#view-login .chip[data-mode]').forEach(c => c.onclick = () => {
-  LOGIN_MODE = c.dataset.mode;
-  $$('#view-login .chip[data-mode]').forEach(x => x.classList.toggle('active', x === c));
-  $('#acc-submit').textContent = LOGIN_MODE === 'login' ? '登 录' : '注 册 并 登 录';
-  if (LOGIN_MODE === 'register' && !$('#acc-user').value.trim()) {
-    $('#acc-pwd').value = '';
-  }
-});
+$$('#view-login .chip[data-mode]').forEach(c => c.onclick = () => setLoginMode(c.dataset.mode));
 
 async function submitAccount() {
   const u = $('#acc-user').value.trim();
@@ -89,9 +78,7 @@ async function submitAccount() {
       await Store.login(u, p, rem);
       toast('登录成功：' + u);
     }
-    // 登录成功：启动云端定时同步（每 60s push 一次）
-    startCloudPushTimer();
-    // 记住账号也更新（注册默认记住）
+    startCloudPushTimer();      // 登录成功后启动 60s 云端定时推送
     updateUserTag();
     renderAccountSwitcher();
     renderHome();
@@ -103,9 +90,9 @@ async function submitAccount() {
   }
 }
 $('#acc-submit').onclick = submitAccount;
+
 $('#acc-skip').onclick = () => {
-  // 访客身份
-  Store.switchUser(null);
+  Store.switchUser(null); // 访客身份
   updateUserTag();
   renderAccountSwitcher();
   renderHome();
@@ -119,27 +106,18 @@ function renderAccountSwitcher() {
   if (!accounts.length) { wrap.classList.add('hidden'); return; }
   wrap.classList.remove('hidden');
   wrap.innerHTML = '';
-  const title = el('div', 'sw-title', '快速切换已保存账号：');
-  wrap.appendChild(title);
+  wrap.appendChild(el('div', 'sw-title', '快速切换已保存账号：'));
   const list = el('div', 'sw-list');
   accounts.forEach(name => {
-    const chip = el('span', 'sw-chip', `<span>👤 ${name}</span>`);
-    chip.onclick = async () => {
-      // 切账号：如果没记住密码就要求输入密码
-      const u = Store.rememberUsername();
-      if (u === name && Store.who() === name) {
-        toast('已是当前账号'); return;
-      }
-      // 弹出密码（简化：不重输密码只在自动登录态可用；否则走登录页填密码）
+    const chip = el('span', 'sw-chip', `<span>👤 ${esc(name)}</span>`);
+    chip.onclick = () => {
+      // 本地已保存的账号可直接切换（信任本机）；无密码校验，见审查报告说明
+      if (Store.who() === name) { toast('已是当前账号'); return; }
       try {
         Store.switchUser(name);
-        // 直接尝试是否有 autoLogin 权限：在 store 里是靠 remember + autoLogin 标记，这里简单判定
-        const ok = Store.who() === name;
-        if (ok) {
-          updateUserTag(); renderHome(); toast('已切换到：' + name); showView('home');
-        }
+        updateUserTag(); renderHome(); toast('已切换到：' + name); showView('home');
       } catch (e) {
-        // 回退：把用户名填进表单
+        // 回退：把用户名填进表单，要求输入密码
         $('#acc-user').value = name; $('#acc-pwd').value = '';
         $('#acc-pwd').focus();
         toast('请输入密码以切换账号');
@@ -150,21 +128,62 @@ function renderAccountSwitcher() {
   wrap.appendChild(list);
 }
 
-// ============ 初始化 ============
+// ==================== 云端同步调度（每 60s 推送一次） ====================
+let CLOUD_PUSH_TIMER = null;
+let CLOUD_LAST = { at: null, ok: null, msg: '' };
+
+function stopCloudPushTimer() {
+  if (CLOUD_PUSH_TIMER) { clearInterval(CLOUD_PUSH_TIMER); CLOUD_PUSH_TIMER = null; }
+}
+
+function startCloudPushTimer() {
+  stopCloudPushTimer();
+  if (!Store.cloudEnabled || !Store.cloudEnabled()) return;
+  // 登录成功后先推一次，避免干等 60s
+  setTimeout(async () => {
+    const r = await Store.cloudPushNow();
+    CLOUD_LAST = { at: Date.now(), ok: !!r.ok, msg: r.ok ? '首次自动同步成功' : (r.reason || '云端可能暂不可用') };
+    refreshCloudStatus();
+  }, 800);
+  CLOUD_PUSH_TIMER = setInterval(async () => {
+    if (!Store.who()) return;
+    const r = await Store.cloudPushNow();
+    CLOUD_LAST = { at: Date.now(), ok: !!r.ok, msg: r.ok ? '已同步' : ((r.reason || '') + (r.error ? ': ' + String(r.error.message || r.error) : '')) };
+    refreshCloudStatus();
+  }, 60 * 1000);
+}
+
+function refreshCloudStatus() {
+  const state = $('#me-cloud-detail');
+  if (!state) return;
+  if (!Store.cloudEnabled || !Store.cloudEnabled()) { state.textContent = '未启用（本地模式）'; return; }
+  if (!Store.who()) { state.textContent = '未登录'; return; }
+  const s = CLOUD_LAST;
+  if (!s.at) { state.textContent = '已就绪，约每 60 秒自动同步一次'; return; }
+  const t = new Date(s.at);
+  const ts = [t.getHours(), t.getMinutes(), t.getSeconds()].map(x => String(x).padStart(2, '0')).join(':');
+  const icon = s.ok ? '✅' : '❌';
+  const color = s.ok ? 'var(--accent2)' : 'var(--danger)';
+  state.innerHTML = `<span style="color:${color}">${icon} ${ts} ${esc(s.msg || (s.ok ? '成功' : '失败'))}</span>`;
+}
+
+// ==================== 启动流程 ====================
+function setSplash(m) { $('#splash-text').textContent = m; }
+
 async function boot() {
   try {
     setSplash('正在加载题库…');
     const r = await DB.init(setSplash);
     $('#db-version').textContent = 'v' + (r.version || 'local');
 
-    // 自动登录（记住的账号）
     const auto = Store.autoLogin();
     if (auto) {
       toast('已自动登录：' + auto.username);
-      // 自动登录后：立刻拉一次云端进度（防止别的设备最近有更新），再启动 60s 自动推送
+      // 自动登录后立刻拉一次云端进度（其他设备可能有更新），再启动定时推送
       if (Store.cloudEnabled && Store.cloudEnabled()) {
-        try { const p = await Store.cloudPullNow();
-              CLOUD_LAST = { at: Date.now(), ok: !!p.ok, msg: p.ok ? (p.nothing ? '自动登录：云端暂无新进度' : '自动登录：已合并云端进度') : '自动登录：同步失败，将用本地进度' };
+        try {
+          const p = await Store.cloudPullNow();
+          CLOUD_LAST = { at: Date.now(), ok: !!p.ok, msg: p.ok ? (p.nothing ? '自动登录：云端暂无新进度' : '自动登录：已合并云端进度') : '自动登录：同步失败，将用本地进度' };
         } catch (_) {}
       }
       startCloudPushTimer();
@@ -173,37 +192,28 @@ async function boot() {
       renderHome();
       showView('home');
     } else {
-      // 预填记住的用户名
       const rem = Store.rememberUsername();
       if (rem) $('#acc-user').value = rem;
       updateUserTag();
       renderAccountSwitcher();
-      // 如果没有任何账号，允许访客；否则去登录
-      const noAcc = !Store.listAccounts().length;
-      if (noAcc) {
-        // 展示登录/注册，默认注册
-        LOGIN_MODE = 'register';
-        $$('#view-login .chip[data-mode]').forEach(x => x.classList.toggle('active', x.dataset.mode === 'register'));
-        $('#acc-submit').textContent = '注 册 并 登 录';
-      }
+      // 没有任何账号时默认展示注册
+      if (!Store.listAccounts().length) setLoginMode('register');
       showView('login');
     }
 
-    // 非阻塞检查更新
-    checkForUpdates(false);
+    checkForUpdates(false); // 非阻塞检查更新
   } catch (e) {
     setSplash('题库加载失败：' + (e.message || e));
   }
 }
-function setSplash(m) { $('#splash-text').textContent = m; }
 
-// ============ 更新检测 ============
+// ==================== 题库更新检测 ====================
 async function checkForUpdates(force) {
   try {
     const { hasUpdate, remote, local } = await DB.checkUpdate();
     if (hasUpdate) {
       $('#update-desc').innerHTML =
-        `新版本 <b>v${remote.version}</b> 已发布<br>题量：${remote.question_count} 题<br>当前：v${local || '无'}`;
+        `新版本 <b>v${esc(remote.version)}</b> 已发布<br>题量：${esc(remote.question_count)} 题<br>当前：v${esc(local || '无')}`;
       $('#update-modal').classList.remove('hidden');
     } else if (force) {
       toast('题库已是最新版本 v' + (local || remote.version));
@@ -217,7 +227,8 @@ $('#btn-sync').onclick = () => checkForUpdates(true);
 $('#update-later').onclick = () => $('#update-modal').classList.add('hidden');
 $('#update-now').onclick = async () => {
   try {
-    setSplash('正在下载新题库…'); $('#view-splash').classList.add('active');
+    setSplash('正在下载新题库…');
+    $('#view-splash').classList.add('active');
     showView('splash');
     let prog = 0;
     const v = await DB.downloadUpdate(null, p => { if (p !== prog) { prog = p; setSplash('下载中 ' + p + '%'); } });
@@ -232,16 +243,18 @@ $('#update-now').onclick = async () => {
   }
 };
 
-// ============ 首页 ============
+// ==================== 首页 ====================
 function renderHome() {
-  const gs = Store.globalStats(); gs.total = DB.total();
+  const gs = Store.globalStats();
+  gs.total = DB.total();
   const banks = DB.listBanks();
+
   $('#home-stats').innerHTML = `
     <div class="stat-card"><div class="num">${gs.total}</div><div class="lbl">总题数</div></div>
     <div class="stat-card green"><div class="num">${gs.answered}</div><div class="lbl">已练习</div></div>
     <div class="stat-card orange"><div class="num">${gs.rate}%</div><div class="lbl">正确率</div></div>
     <div class="stat-card"><div class="num">${gs.wrong}</div><div class="lbl">错题</div></div>`;
-  $('#wrong-count-desc').textContent = (Store.wrongCount()) + ' 道错题';
+  $('#wrong-count-desc').textContent = Store.wrongCount() + ' 道错题';
 
   $('#bank-list').innerHTML = banks.map(b => {
     const rows = DB.exec("SELECT type, COUNT(*) c FROM questions WHERE bank=? GROUP BY type", [b.bank]);
@@ -252,8 +265,8 @@ function renderHome() {
     return `<div class="list-item">
       <div class="li-ic">📘</div>
       <div class="li-main">
-        <div class="li-title">${b.title}</div>
-        <div class="li-sub">${n} 题 · ${parts.join(' / ')}</div>
+        <div class="li-title">${esc(b.title)}</div>
+        <div class="li-sub">${n} 题 · ${esc(parts.join(' / '))}</div>
         <div class="progress-mini"><i style="width:${pct}%"></i></div>
       </div>
       <div class="li-right">${bs.rate || 0}%</div>
@@ -261,10 +274,7 @@ function renderHome() {
   }).join('');
 }
 
-function typeLabel(t) { return { single: '单选', multiple: '多选', judge: '判断', short_multi: '简答' }[t] || t; }
-function srcLabel(t) { return { single: '单选', multiple: '多选', judge: '判断', short: '简答' }[t] || t; }
-
-// ============ 配置页 ============
+// ==================== 配置页（刷题前选择） ====================
 const SETUP = { mode: 'practice', types: ['single', 'multiple', 'judge', 'short'], order: 'seq', count: 20, bank: '' };
 
 function openSetup(mode) {
@@ -273,24 +283,30 @@ function openSetup(mode) {
   $('#setup-title').textContent = titles[mode] || '刷题';
 
   const banks = [{ bank: '', title: '全部题库' }].concat(DB.listBanks());
-  $('#setup-bank').innerHTML = banks.map(b => `<option value="${b.bank}">${b.title}</option>`).join('');
+  $('#setup-bank').innerHTML = banks.map(b => `<option value="${esc(b.bank)}">${esc(b.title)}</option>`).join('');
 
-  const types = mode === 'exam' ? ['single', 'multiple', 'judge', 'short'] : ['single', 'multiple', 'judge', 'short'];
-  $('#setup-types').innerHTML = types.map(t => `<span class="chip ${mode === 'exam' || SETUP.types.includes(t) ? 'active' : ''}" data-val="${t}">${srcLabel(t)}</span>`).join('');
-  $$('#setup-types .chip').forEach(c => c.onclick = () => { c.classList.toggle('active'); });
+  // 模拟考试固定全题型；其他模式沿用上次选择
+  const types = ['single', 'multiple', 'judge', 'short'];
+  $('#setup-types').innerHTML = types.map(t =>
+    `<span class="chip ${mode === 'exam' || SETUP.types.includes(t) ? 'active' : ''}" data-val="${t}">${typeLabel(t)}</span>`).join('');
+  $$('#setup-types .chip').forEach(c => c.onclick = () => c.classList.toggle('active'));
 
   $$('#setup-order .chip').forEach(c => c.classList.toggle('active', c.dataset.val === SETUP.order));
   $$('#setup-order .chip').forEach(c => c.onclick = () => {
-    $$('#setup-order .chip').forEach(x => x.classList.remove('active')); c.classList.add('active'); SETUP.order = c.dataset.val;
+    $$('#setup-order .chip').forEach(x => x.classList.remove('active'));
+    c.classList.add('active');
+    SETUP.order = c.dataset.val;
   });
 
   const cnt = $('#setup-count');
   cnt.value = mode === 'exam' ? 50 : SETUP.count;
   $('#setup-count-val').textContent = cnt.value;
   cnt.oninput = () => $('#setup-count-val').textContent = cnt.value;
-  $('#setup-order').style.display = mode === 'exam' ? 'none' : '';
-  const thirdLabel = document.querySelectorAll('.field-label')[2];
-  if (thirdLabel) thirdLabel.style.display = mode === 'exam' ? 'none' : '';
+
+  // 模拟考试不展示"出题方式"（固定随机）
+  const orderHidden = mode === 'exam';
+  $('#setup-order').style.display = orderHidden ? 'none' : '';
+  $('#label-order').style.display = orderHidden ? 'none' : '';
 
   showView('setup');
 }
@@ -305,10 +321,10 @@ $('#setup-start').onclick = () => {
 
   let qs;
   if (SETUP.mode === 'smart') {
+    // 智能练题：先取出全部候选题 id，按历史正确率加权抽取
     const all = DB.pickQuestions({ bank: SETUP.bank || null, limit: 99999 });
     const ids = all.map(q => q.id);
-    const n = Math.min(SETUP.count, ids.length);
-    const picked = Store.pickWeighted(ids, n);
+    const picked = Store.pickWeighted(ids, Math.min(SETUP.count, ids.length));
     qs = DB.byIds(picked);
   } else if (SETUP.mode === 'exam') {
     SETUP.types = ['single', 'multiple', 'judge', 'short'];
@@ -320,26 +336,26 @@ $('#setup-start').onclick = () => {
   startQuiz(qs);
 };
 
-// ============ 答题引擎 + 大屏答题卡 ============
+// ==================== 答题引擎 ====================
 const QUIZ = { qs: [], idx: 0, sel: {}, results: [], wrongs: [] };
+// qs: 题目数组；idx: 当前题号；sel: {idx: {sel:[], submitted}}
+// results: {idx: boolean}；wrongs: 本次答错的题目 id 列表
 
 function startQuiz(qs) {
   QUIZ.qs = qs; QUIZ.idx = 0; QUIZ.sel = {}; QUIZ.results = []; QUIZ.wrongs = [];
   renderQuiz();
   showView('quiz');
-  // PC 端答题卡：首次进入时构造
-  ensureAnswerSheet();
+  ensureAnswerSheet(); // PC 端答题卡
 }
 
+/** 宽屏(≥1100px)时在答题页插入答题卡 DOM */
 function ensureAnswerSheet() {
-  // 屏幕宽时插入答题卡 DOM（quiz-foot 前）
   if (window.innerWidth < 1100) return;
   let sheet = document.querySelector('.answer-sheet');
   if (!sheet) {
     sheet = el('div', 'answer-sheet');
-    // 插入到 quiz-foot 前面
-    const foot = document.getElementById('view-quiz').querySelector('.quiz-foot');
-    document.getElementById('view-quiz').insertBefore(sheet, foot);
+    const foot = $('#view-quiz .quiz-foot');
+    $('#view-quiz').insertBefore(sheet, foot);
   }
   renderAnswerSheet();
 }
@@ -367,10 +383,9 @@ function renderAnswerSheet() {
       return `<div class="${cls}" data-i="${i}">${i + 1}</div>`;
     }).join('')}</div>`;
   $$('.answer-sheet .as-cell').forEach(c => c.onclick = () => {
-    const i = +c.dataset.i;
-    QUIZ.idx = i; renderQuiz();
-    // 滚到题干顶部
-    document.getElementById('view-quiz').scrollTo({ top: 0, behavior: 'smooth' });
+    QUIZ.idx = +c.dataset.i;
+    renderQuiz();
+    $('#view-quiz').scrollTo({ top: 0, behavior: 'smooth' });
   });
 }
 
@@ -383,53 +398,51 @@ function renderQuiz() {
   $('#quiz-score').textContent = correct + '/' + (QUIZ.idx + 1);
   $('#q-prev').style.visibility = QUIZ.idx === 0 ? 'hidden' : 'visible';
 
-  const submitted = QUIZ.sel[QUIZ.idx] !== undefined && QUIZ.sel[QUIZ.idx].submitted;
-  const sel = QUIZ.sel[QUIZ.idx] ? QUIZ.sel[QUIZ.idx].sel : [];
+  // 保证当前题目的作答状态存在
+  if (!QUIZ.sel[QUIZ.idx]) QUIZ.sel[QUIZ.idx] = { sel: [], submitted: false };
+  const state = QUIZ.sel[QUIZ.idx];
+  const submitted = state.submitted;
+
   const body = $('#quiz-body');
   body.innerHTML = '';
 
   const meta = el('div', 'q-meta');
-  meta.innerHTML = `<span class="tag">${q.bank_title}</span><span>${typeLabel(q.type)}</span>${q.source_type==='short'?'<span style="color:#8b5cf6">由简答转</span>':''}`;
+  meta.innerHTML = `<span class="tag">${esc(q.bank_title)}</span><span>${typeLabel(q.type)}</span>${q.source_type === 'short' ? '<span style="color:#8b5cf6">由简答转</span>' : ''}`;
   body.appendChild(meta);
 
-  const stem = el('div', 'q-stem', q.question);
-  body.appendChild(stem);
+  body.appendChild(el('div', 'q-stem', esc(q.question)));
 
   let opts = q.options;
   if (q.type === 'judge') opts = [['T', '正确'], ['F', '错误']];
   const isMulti = q.type === 'multiple';
   opts.forEach(([k, txt]) => {
     const o = el('div', 'opt');
-    const selected = sel.includes(k);
+    const selected = state.sel.includes(k);
     if (selected) o.classList.add('selected');
     if (submitted) {
-      const isAns = q.answer.includes(k);
-      if (isAns) o.classList.add('correct');
+      if (q.answer.includes(k)) o.classList.add('correct');
       else if (selected) o.classList.add('wrong');
       o.classList.add('disabled');
     }
-    o.innerHTML = `<div class="opt-key">${k}</div><div class="opt-txt">${txt}</div><div class="mark"></div>`;
+    o.innerHTML = `<div class="opt-key">${esc(k)}</div><div class="opt-txt">${esc(txt)}</div><div class="mark"></div>`;
     if (!submitted) o.onclick = () => {
-      if (!QUIZ.sel[QUIZ.idx]) QUIZ.sel[QUIZ.idx] = { sel: [], submitted: false };
       if (isMulti) {
-        if (selected) QUIZ.sel[QUIZ.idx].sel = sel.filter(x => x !== k);
-        else QUIZ.sel[QUIZ.idx].sel = [...sel, k];
+        state.sel = state.sel.includes(k) ? state.sel.filter(x => x !== k) : [...state.sel, k];
       } else {
-        QUIZ.sel[QUIZ.idx].sel = [k];
+        state.sel = [k];
       }
       renderQuiz();
     };
     body.appendChild(o);
   });
 
-  if (!QUIZ.sel[QUIZ.idx]) QUIZ.sel[QUIZ.idx] = { sel: [], submitted: false };
-
   if (submitted) {
     const correctNow = QUIZ.results[QUIZ.idx];
+    const ansText = q.answer.map(a => q.type === 'judge' ? (a === 'T' ? '正确' : '错误') : a).join('、');
     const an = el('div', 'analysis');
     an.innerHTML = `<div class="an-title">${correctNow ? '✓ 回答正确' : '✗ 回答错误'}</div>
-      <div class="an-body"><b>正确答案：</b>${q.answer.map(a => q.type==='judge' ? (a==='T'?'正确':'错误') : a).join('、')}
-      ${q.analysis ? '<br><b>参考解析：</b>' + q.analysis : ''}</div>`;
+      <div class="an-body"><b>正确答案：</b>${esc(ansText)}
+      ${q.analysis ? '<br><b>参考解析：</b>' + esc(q.analysis) : ''}</div>`;
     body.appendChild(an);
   }
 
@@ -437,12 +450,12 @@ function renderQuiz() {
   $('#q-next').classList.toggle('hidden', !submitted);
   $('#q-next').textContent = QUIZ.idx === total - 1 ? '完成' : '下一题';
 
-  // PC 答题卡渲染
   ensureAnswerSheet();
   renderAnswerSheet();
 }
 
 $('#q-prev').onclick = () => { if (QUIZ.idx > 0) { QUIZ.idx--; renderQuiz(); } };
+
 $('#q-submit').onclick = () => {
   const q = QUIZ.qs[QUIZ.idx];
   if (!QUIZ.sel[QUIZ.idx]) QUIZ.sel[QUIZ.idx] = { sel: [], submitted: false };
@@ -455,24 +468,26 @@ $('#q-submit').onclick = () => {
   if (!correct && !QUIZ.wrongs.includes(q.id)) QUIZ.wrongs.push(q.id);
   renderQuiz();
 };
+
 $('#q-next').onclick = () => {
   if (QUIZ.idx < QUIZ.qs.length - 1) { QUIZ.idx++; renderQuiz(); }
   else finishQuiz();
 };
 
+/** 集合相等判断（选项顺序无关） */
 function sameSet(a, b) {
   if (a.length !== b.length) return false;
-  const A = [...a].sort().join(''), B = [...b].sort().join('');
-  return A === B;
+  return [...a].sort().join('') === [...b].sort().join('');
 }
 
 function finishQuiz() {
   // 清掉插入的答题卡元素，避免下次进入时重复
   document.querySelectorAll('.answer-sheet').forEach(n => n.remove());
-  renderResult(); showView('result');
+  renderResult();
+  showView('result');
 }
 
-// ============ 结果页 ============
+// ==================== 结果页 ====================
 function renderResult() {
   const total = QUIZ.qs.length;
   const correct = QUIZ.results.filter(Boolean).length;
@@ -483,8 +498,8 @@ function renderResult() {
   $('#result-wrongs').innerHTML = QUIZ.wrongs.length ? QUIZ.wrongs.map(id => {
     const q = QUIZ.qs.find(x => x.id === id);
     return `<div class="list-item"><div class="li-ic">✗</div><div class="li-main">
-      <div class="li-title">${q.question.slice(0, 40)}</div>
-      <div class="li-sub">${q.bank_title} · ${typeLabel(q.type)}</div></div></div>`;
+      <div class="li-title">${esc(q.question.slice(0, 40))}</div>
+      <div class="li-sub">${esc(q.bank_title)} · ${typeLabel(q.type)}</div></div></div>`;
   }).join('') : '<div class="empty-tip">本次全对，太棒了！</div>';
 }
 
@@ -495,14 +510,15 @@ $('#result-review').onclick = () => {
 };
 $('#result-again').onclick = () => openSetup(SETUP.mode);
 
-// ============ 背题模式 ============
+// ==================== 背题模式 ====================
 const MEM = { qs: [], idx: 0 };
 
 function startMemorize() {
   const qs = DB.pickQuestions({ bank: SETUP.bank || null, types: SETUP.types, order: SETUP.order, limit: SETUP.count });
   if (!qs.length) { toast('没有题目'); return; }
   MEM.qs = qs; MEM.idx = 0;
-  renderMemorize(); showView('memorize');
+  renderMemorize();
+  showView('memorize');
 }
 
 function renderMemorize() {
@@ -511,20 +527,18 @@ function renderMemorize() {
   $('#mem-text').textContent = (MEM.idx + 1) + ' / ' + total;
   $('#mem-fill').style.width = ((MEM.idx + 1) / total * 100) + '%';
   $('#mem-prev').style.visibility = MEM.idx === 0 ? 'hidden' : 'visible';
-  let ansTxt = q.answer.map(a => q.type === 'judge' ? (a === 'T' ? '正确' : '错误') : a).join('、');
-  let optsTxt = '';
-  if (q.type !== 'judge') {
-    optsTxt = q.options.map(([k, t]) => `<div><b>${k}.</b> ${t}${q.answer.includes(k) ? ' ✓' : ''}</div>`).join('');
-  }
+  const ansTxt = q.answer.map(a => q.type === 'judge' ? (a === 'T' ? '正确' : '错误') : a).join('、');
+  const optsTxt = q.type === 'judge' ? '' :
+    q.options.map(([k, t]) => `<div><b>${esc(k)}.</b> ${esc(t)}${q.answer.includes(k) ? ' ✓' : ''}</div>`).join('');
   $('#memorize-body').innerHTML = `
     <div class="mem-card">
-      <div class="mem-tag">${q.bank_title} · ${typeLabel(q.type)}</div>
-      <div class="mem-stem">${q.question}</div>
+      <div class="mem-tag">${esc(q.bank_title)} · ${typeLabel(q.type)}</div>
+      <div class="mem-stem">${esc(q.question)}</div>
       <div class="mem-divider"></div>
       <div class="mem-label">正确答案</div>
-      <div class="mem-answer">${ansTxt}</div>
+      <div class="mem-answer">${esc(ansTxt)}</div>
       ${optsTxt ? '<div class="mem-divider"></div><div class="mem-label">选项</div><div class="mem-answer">' + optsTxt + '</div>' : ''}
-      ${q.analysis ? '<div class="mem-analysis"><b>参考解析：</b>' + q.analysis + '</div>' : ''}
+      ${q.analysis ? '<div class="mem-analysis"><b>参考解析：</b>' + esc(q.analysis) + '</div>' : ''}
     </div>`;
 }
 $('#mem-prev').onclick = () => { if (MEM.idx > 0) { MEM.idx--; renderMemorize(); } };
@@ -538,25 +552,25 @@ $('#mem-mark').onclick = () => {
   toast('已加入错题本');
 };
 
-// ============ 错题集 ============
+// ==================== 错题集 ====================
 function renderWrongBook() {
   const banks = [{ bank: '', title: '全部题库' }].concat(DB.listBanks());
-  $('#wrong-bank').innerHTML = banks.map(b => `<option value="${b.bank}">${b.title}</option>`).join('');
-  const ids = Store.getWrongIds();
+  $('#wrong-bank').innerHTML = banks.map(b => `<option value="${esc(b.bank)}">${esc(b.title)}</option>`).join('');
   const bankFilter = $('#wrong-bank').value;
-  const qs = DB.byIds(ids).filter(q => !bankFilter || q.bank === bankFilter);
+  const qs = DB.byIds(Store.getWrongIds()).filter(q => !bankFilter || q.bank === bankFilter);
   $('#wrong-empty').classList.toggle('hidden', qs.length > 0);
   $('#wrong-list').innerHTML = qs.map(q => `
     <div class="list-item">
       <div class="li-ic" style="background:#fef2f2">✗</div>
       <div class="li-main">
-        <div class="li-title">${q.question.slice(0, 42)}</div>
-        <div class="li-sub">${q.bank_title} · ${typeLabel(q.type)} · 错${Store.qStat(q.id).wrong}次</div>
+        <div class="li-title">${esc(q.question.slice(0, 42))}</div>
+        <div class="li-sub">${esc(q.bank_title)} · ${typeLabel(q.type)} · 错${Store.qStat(q.id).wrong}次</div>
       </div>
       <button class="link-btn" data-rm="${q.id}">移除</button>
     </div>`).join('');
   $$('#wrong-list [data-rm]').forEach(b => b.onclick = () => {
-    Store.removeWrong(+b.dataset.rm); renderWrongBook();
+    Store.removeWrong(+b.dataset.rm);
+    renderWrongBook();
   });
 }
 $('#wrong-bank').onchange = renderWrongBook;
@@ -565,35 +579,37 @@ $('#wrong-clear').onclick = () => {
   if (confirm('确定清空全部错题？')) { Store.clearWrong(); renderWrongBook(); toast('已清空'); }
 };
 
-// ============ 路由/事件 ============
+// ==================== 全局导航 ====================
+function requireLogin() {
+  if (Store.who()) return true;
+  showView('login');
+  toast('请先登录/注册以保存进度');
+  return false;
+}
+
 $$('.tab').forEach(t => t.onclick = () => {
   const tab = t.dataset.tab;
-  if (tab === 'home') { if (Store.who()) { renderHome(); showView('home'); } else showView('login'); }
-  else if (tab === 'practice') {
-    if (!Store.who()) { showView('login'); toast('请先登录/注册以保存进度'); return; }
-    openSetup('practice');
+  if (tab === 'home') {
+    if (Store.who()) { renderHome(); showView('home'); } else showView('login');
   }
-  else if (tab === 'wrong-book') {
-    if (!Store.who()) { showView('login'); toast('请先登录/注册以保存进度'); return; }
-    renderWrongBook(); showView('wrong');
-  }
-  else if (tab === 'memorize') {
-    if (!Store.who()) { showView('login'); toast('请先登录/注册以保存进度'); return; }
-    openSetup('memorize');
-  }
+  else if (tab === 'practice') { if (requireLogin()) openSetup('practice'); }
+  else if (tab === 'wrong-book') { if (requireLogin()) { renderWrongBook(); showView('wrong'); } }
+  else if (tab === 'memorize') { if (requireLogin()) openSetup('memorize'); }
   else if (tab === 'me') showMe();
 });
+
 $$('[data-back]').forEach(b => b.onclick = () => showView(b.dataset.back));
+
 $$('.mode-card').forEach(c => c.onclick = () => {
   const m = c.dataset.mode;
-  if (!Store.who()) { showView('login'); toast('请先登录/注册以保存进度'); return; }
+  if (!requireLogin()) return;
   if (m === 'wrong-book') { renderWrongBook(); showView('wrong'); }
   else if (m === 'wrong-train') {
     const ids = Store.getWrongIds();
     if (!ids.length) { toast('错题集为空，先去刷题吧'); return; }
-    const qs = DB.byIds(ids);
-    startQuiz(qs);
-  } else if (m === 'memorize') openSetup('memorize');
+    startQuiz(DB.byIds(ids));
+  }
+  else if (m === 'memorize') openSetup('memorize');
   else if (m === 'smart') openSetup('smart');
   else if (m === 'exam') openSetup('exam');
   else openSetup('practice');
@@ -604,34 +620,33 @@ function goLoginPage() {
   const rem = Store.rememberUsername();
   if (rem) $('#acc-user').value = rem;
   $('#acc-pwd').value = '';
-  LOGIN_MODE = 'login';
-  $$('#view-login .chip[data-mode]').forEach(x => x.classList.toggle('active', x.dataset.mode === 'login'));
-  $('#acc-submit').textContent = '登 录';
+  setLoginMode('login');
   renderAccountSwitcher();
 }
 
+// ==================== 账号中心 ====================
 function showMe() {
   const who = Store.who();
   if (!who) { showView('login'); return; }
-  const gs = Store.globalStats(); gs.total = DB.total();
+  const gs = Store.globalStats();
+  gs.total = DB.total();
   const accounts = Store.listAccounts();
   $('#me-desc').innerHTML = `
     <div>
-      <b style="font-size:16px;color:var(--ink)">👤 当前账号：</b> <b style="color:var(--primary-d)">${who}</b><br><br>
+      <b style="font-size:16px;color:var(--ink)">👤 当前账号：</b> <b style="color:var(--primary-d)">${esc(who)}</b><br><br>
       <b>学习进度：</b><br>
       · 总题数：<b>${gs.total}</b> · 已练习：<b>${gs.answered}</b> · 正确率：<b style="color:var(--accent2)">${gs.rate}%</b> · 错题：<b style="color:var(--danger)">${gs.wrong}</b><br><br>
       <b>已注册账号（共 ${accounts.length} 个）：</b><br>
-      ${accounts.map(a => (a===who ? '✅ <b>'+a+'</b>（当前）' : '· '+a)).join('<br>') || '（暂无其他账号）'}
+      ${accounts.map(a => (a === who ? '✅ <b>' + esc(a) + '</b>（当前）' : '· ' + esc(a))).join('<br>') || '（暂无其他账号）'}
     </div>`;
   refreshCloudStatus();
   $('#me-modal').classList.remove('hidden');
 }
 
-// 绑定账号中心按钮
-document.addEventListener('DOMContentLoaded', () => {
-  // 云端同步两个新按钮
+function bindAccountCenter() {
   const btnPush = $('#me-cloud-push');
   const btnPull = $('#me-cloud-pull');
+
   if (btnPush) btnPush.onclick = async () => {
     if (!Store.who()) { toast('请先登录'); return; }
     btnPush.disabled = true; const ot = btnPush.textContent; btnPush.textContent = '同步中…';
@@ -642,6 +657,7 @@ document.addEventListener('DOMContentLoaded', () => {
       toast(CLOUD_LAST.ok ? '已同步到云端：' + CLOUD_LAST.msg : '同步失败：' + CLOUD_LAST.msg);
     } finally { btnPush.disabled = false; btnPush.textContent = ot; }
   };
+
   if (btnPull) btnPull.onclick = async () => {
     if (!Store.who()) { toast('请先登录'); return; }
     btnPull.disabled = true; const ot = btnPull.textContent; btnPull.textContent = '拉取中…';
@@ -650,7 +666,10 @@ document.addEventListener('DOMContentLoaded', () => {
       CLOUD_LAST = { at: Date.now(), ok: !!r.ok, msg: r.ok ? (r.nothing ? '云端暂无进度' : '已合并云端进度到本地') : (r.reason || String(r.error?.message || r.error || '失败')) };
       refreshCloudStatus();
       toast(CLOUD_LAST.ok ? CLOUD_LAST.msg : '拉取失败：' + CLOUD_LAST.msg);
-      if (CLOUD_LAST.ok) { updateUserTag(); renderAccountSwitcher(); if ($('#view-home').classList.contains('active')) renderHome(); }
+      if (CLOUD_LAST.ok) {
+        updateUserTag(); renderAccountSwitcher();
+        if ($('#view-home').classList.contains('active')) renderHome();
+      }
     } finally { btnPull.disabled = false; btnPull.textContent = ot; }
   };
 
@@ -659,13 +678,16 @@ document.addEventListener('DOMContentLoaded', () => {
       const dump = Store.exportAll();
       const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
-      const stamp = new Date(); const y = stamp.getFullYear();
-      const m = String(stamp.getMonth()+1).padStart(2,'0'); const d = String(stamp.getDate()).padStart(2,'0');
+      const stamp = new Date();
+      const y = stamp.getFullYear();
+      const m = String(stamp.getMonth() + 1).padStart(2, '0');
+      const d = String(stamp.getDate()).padStart(2, '0');
       a.download = `刷题大专家-数据备份-${y}${m}${d}.json`;
       a.href = URL.createObjectURL(blob);
-      document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
-      const n = Object.keys(dump.users).length;
-      toast(`已导出 ${n} 个账号的数据，请在另一台设备的"账号中心-导入数据"里导入`);
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+      toast(`已导出 ${Object.keys(dump.users).length} 个账号的数据，请在另一台设备的"账号中心-导入数据"里导入`);
     } catch (e) {
       toast('导出失败：' + (e.message || String(e)));
     }
@@ -678,21 +700,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const fr = new FileReader();
     fr.onload = ev => {
       try {
-        let dump; try { dump = JSON.parse(ev.target.result); } catch(_){ throw new Error('文件不是合法的 JSON'); }
+        let dump;
+        try { dump = JSON.parse(ev.target.result); } catch (_) { throw new Error('文件不是合法的 JSON'); }
         const r = Store.importAll(dump, { mode: 'merge' });
         let msg = `导入完成：成功 ${r.imported.length} 个账号`;
         if (r.failed.length) msg += '，失败 ' + r.failed.length;
         toast(msg);
-        // 刷新 UI（账号列表、当前进度）
         updateUserTag(); renderAccountSwitcher();
         if (Store.who()) renderHome();
-        // 如果当前在首页，重新渲染
         if ($('#view-home').classList.contains('active')) renderHome();
-        // 展示细节
         setTimeout(() => alert(
           '导入完成：\n' +
-          '成功：' + (r.imported.length?r.imported.join('、'):'（无）') + '\n' +
-          '失败：' + (r.failed.length?r.failed.join('；'):'（无）') + '\n\n' +
+          '成功：' + (r.imported.length ? r.imported.join('、') : '（无）') + '\n' +
+          '失败：' + (r.failed.length ? r.failed.join('；') : '（无）') + '\n\n' +
           '如果导入的账号密码你清楚，可以直接在登录页输入密码登录。\n如果想直接切到该账号且勾选了"记住"，下次打开会自动登录。'
         ), 200);
       } catch (err) {
@@ -710,15 +730,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('#me-logout').onclick = () => {
     $('#me-modal').classList.add('hidden');
-    // 退出登录：停掉云端同步定时器
     stopCloudPushTimer();
     Store.logout();
     updateUserTag();
     toast('已退出登录');
     goLoginPage();
   };
-});
+}
+bindAccountCenter();
 
+// ==================== 启动 ====================
 boot();
 
 // 注册 Service Worker（PWA 离线 + 可安装）
