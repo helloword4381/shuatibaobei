@@ -1,0 +1,19 @@
+{
+  "version": "20260822",
+  "question_count": 607,
+  "updated_at": "2026-08-22 10:25:00",
+  "db_file": "shuatibaobei.db",
+  "db_url": "https://raw.githubusercontent.com/helloword4381/shuatibaobei/main/shuatibaobei.db",
+  "manifest_url": "https://raw.githubusercontent.com/helloword4381/shuatibaobei/main/manifest.json",
+  "banks": [
+    "工地试验室日常工作标准化运行管理",
+    "交竣工验收及专项检测质量控制",
+    "路床及路面基层、底基层施工技术和质量管理"
+  ],
+  "stats": {
+    "single": 373,
+    "multiple": 174,
+    "judge": 50,
+    "short_multi": 10
+  }
+}
