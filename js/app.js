@@ -115,6 +115,9 @@ function renderAccountSwitcher() {
       if (Store.who() === name) { toast('已是当前账号'); return; }
       try {
         Store.switchUser(name);
+        // 切换账号后重启云同步定时器（上一个用户的定时器可能已停）
+        stopCloudPushTimer();
+        startCloudPushTimer();
         updateUserTag(); renderHome(); toast('已切换到：' + name); showView('home');
       } catch (e) {
         // 回退：把用户名填进表单，要求输入密码
@@ -476,6 +479,11 @@ $('#q-submit').onclick = () => {
   Store.recordAnswer(q.id, correct, q.bank);
   if (!correct && !QUIZ.wrongs.includes(q.id)) QUIZ.wrongs.push(q.id);
   renderQuiz();
+  // 提交后自动滚到底部操作区，避免"下一题"按钮超出视口要手动滑动
+  setTimeout(() => {
+    const foot = document.querySelector('#view-quiz .quiz-foot');
+    if (foot) foot.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, 50);
 };
 
 $('#q-next').onclick = () => {
